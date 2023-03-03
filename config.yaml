@@ -1,0 +1,76 @@
+global_args:
+  framework: 'torch'
+  device: 'cuda'
+  output_path: /home/michal/Desktop/Data/OvalDetector/
+
+dataset:
+  dataset_path: /home/michal/Desktop/Data/OvalSimulatedData/2023-03-02_12-15-42/
+  use_cache: False
+  
+model:
+  backbone: 'mobilenet'
+  pretrained: True
+  classes: ['Oval']
+
+  mobilenet:
+    batch_size: 48
+    decay1: 190
+    decay2: 220
+    image_size: 640
+    return_layers: {'stage1': 1, 'stage2': 2, 'stage3': 3}
+    in_channel: 32
+    out_channel: 64
+
+  resnet:
+    batch_size: 1
+    decay1: 70
+    decay2: 90
+    image_size: 840
+    return_layers: {'layer2': 1, 'layer3': 2, 'layer4': 3}
+    in_channel: 256
+    out_channel: 256
+
+  head:
+    # Priors
+    steps: [8, 16, 32]
+    aspects: [0.5, 1]
+    #aspects: [1]
+    sizes: [[8, 16], [32, 64], [128, 256]]
+    #sizes: [[4, 8], [16, 32], [64, 128]]
+    variances: [0.1, 0.2]
+    # Negative sampling ratio
+    negpos_ratio: 7
+    # NMS params
+    nms_top_k: 2000
+    nms_thresh: 0.25
+    score_thr: 0.05
+    #nms_top_k: 100
+    #nms_thresh: 0.0001
+    #score_thr: 0.25
+    # Positive IOU threshold
+    iou_thr: 0.5
+  
+  augment:
+    rgb_means: [0, 0, 0] #[B,G,R]
+
+pipeline:
+  name: ObjectDetection
+  inference_mode: False
+  is_resume: False
+  resume_from: 2023-03-02-14-35-41
+  max_epoch: 20
+  validation_freq: 1
+  save_ckpt_freq: 5
+  ngpu: 1
+  gpu_train: True
+  num_workers: 6
+  overlaps: [0.3]
+  gamma: 0.1
+
+  loss:
+    loc_weight: 2.0
+
+  optimizer:
+    lr: 0.01
+    momentum: 0.9
+    weight_decay: 0.0005
