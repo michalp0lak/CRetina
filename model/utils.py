@@ -335,7 +335,7 @@ class DirectionCoder(object):
     """
 
     def __init__(self, variances):
-        super(DirectionCoderCoder, self).__init__()
+        super(DirectionCoder, self).__init__()
         self.variances = variances
 
     def encode(self, target_radius, priors):
