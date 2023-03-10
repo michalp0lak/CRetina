@@ -1,19 +1,22 @@
 global_args:
   framework: 'torch'
   device: 'cuda'
+  seed: 0
   output_path: /home/michal/Desktop/Data/OvalDetector/
 
 dataset:
-  dataset_path: /home/michal/Desktop/Data/OvalSimulatedData/2023-03-02_12-15-42/
+  dataset_path: /home/michal/Desktop/Data/C_detection/2023-03-02_14-26-28/
+  dataset_name: 'SimulatedOvals'
   use_cache: False
   
 model:
+  model_name: 'RetinaC'
   backbone: 'mobilenet'
   pretrained: True
-  classes: ['Oval']
+  classes: ['C']
 
   mobilenet:
-    batch_size: 48
+    batch_size: 12
     decay1: 190
     decay2: 220
     image_size: 640
@@ -33,33 +36,29 @@ model:
   head:
     # Priors
     steps: [8, 16, 32]
-    aspects: [0.5, 1]
-    #aspects: [1]
+    aspects: [0.25, 0.5, 1]
     sizes: [[8, 16], [32, 64], [128, 256]]
     #sizes: [[4, 8], [16, 32], [64, 128]]
     variances: [0.1, 0.2]
     # Negative sampling ratio
     negpos_ratio: 7
     # NMS params
-    nms_top_k: 2000
-    nms_thresh: 0.25
-    score_thr: 0.05
-    #nms_top_k: 100
-    #nms_thresh: 0.0001
-    #score_thr: 0.25
+    nms_top_k: 1000
+    nms_thresh: 0.1
+    score_thr: 0.35
     # Positive IOU threshold
-    iou_thr: 0.5
+    iou_thr: 0.4
   
   augment:
     rgb_means: [0, 0, 0] #[B,G,R]
 
 pipeline:
   name: ObjectDetection
-  inference_mode: False
+  inference_mode: True
   is_resume: False
-  resume_from: 2023-03-02-14-35-41
+  resume_from: 2023-03-10-11-35-29
   max_epoch: 20
-  validation_freq: 1
+  validation_freq: 5
   save_ckpt_freq: 5
   ngpu: 1
   gpu_train: True
@@ -68,9 +67,13 @@ pipeline:
   gamma: 0.1
 
   loss:
+    cls_weight: 1.0
     loc_weight: 2.0
+    center_weight: 1.0
+    radius_weight: 1.0
+    dir_weight: 1.0
 
   optimizer:
-    lr: 0.01
+    lr: 0.001
     momentum: 0.9
     weight_decay: 0.0005

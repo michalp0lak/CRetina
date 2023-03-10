@@ -1,5 +1,5 @@
 general:
-  output_path: '/home/michal/Desktop/Data/OvalSimulatedData/'
+  output_path: '/home/michal/Desktop/Data/C_detection/'
   sample_size: 2000
   sample_split: [0.65, 0.2, 0.15]
   pixel_limit: [500, 1500]

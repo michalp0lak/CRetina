@@ -139,7 +139,7 @@ class TorchDataloader(Dataset):
         # If datum just preprocessed
         elif self.preprocess:
             data = self.preprocess(self.dataset.get_data(index), attr)
-        # Nothnig happens
+        # Nothing happens
         else:
             data = self.dataset.get_data(index)
         # Transform datum if it's required
@@ -170,6 +170,9 @@ class ObjectDetectBatch(object):
         self.images = []
         self.labels = []
         self.boxes = []
+        self.centers = []
+        self.radius = []
+        self.directions = []
         self.attr = []
 
         for batch_item in batch:
@@ -177,15 +180,26 @@ class ObjectDetectBatch(object):
             self.attr.append(batch_item['attr'])
             
             data = batch_item['data']
-
+      
             self.images.append(torch.tensor(data['image'], dtype=torch.float32))
             self.labels.append(torch.tensor(data['labels'], dtype=torch.int32) if 'labels' in data else None)
             
             if len(data.get('boxes', [])) > 0:
+
                 self.boxes.append(
                     torch.tensor(data['boxes'], dtype=torch.float32) if 'boxes' in data else None)
+                self.centers.append(
+                    torch.tensor(data['centers'], dtype=torch.float32) if 'centers' in data else None)
+                self.radius.append(
+                    torch.tensor(data['radius'], dtype=torch.float32) if 'radius' in data else None)
+                self.directions.append(
+                    torch.tensor(data['directions'], dtype=torch.float32) if 'directions' in data else None)
+
             else:
                 self.boxes.append(torch.zeros((0, 4)))
+                self.centers.append(torch.zeros((0, 2)))
+                self.radius.append(torch.zeros((0, 1)))
+                self.directions.append(torch.zeros((0, 1)))
 
         self.images = torch.stack(self.images,0).permute((0,3,1,2))        
 
@@ -198,6 +212,12 @@ class ObjectDetectBatch(object):
                 self.labels[i] = self.labels[i].pin_memory()
             if self.boxes[i] is not None:
                 self.boxes[i] = self.boxes[i].pin_memory()
+            if self.centers[i] is not None:
+                self.centers[i] = self.centers[i].pin_memory()
+            if self.radius[i] is not None:
+                self.radius[i] = self.radius[i].pin_memory()
+            if self.directions[i] is not None:
+                self.directions[i] = self.directions[i].pin_memory()
 
         return self
 
@@ -209,6 +229,9 @@ class ObjectDetectBatch(object):
 
             if self.labels[i] is not None: self.labels[i] = self.labels[i].to(device)
             if self.boxes[i] is not None: self.boxes[i] = self.boxes[i].to(device)
+            if self.centers[i] is not None: self.centers[i] = self.centers[i].to(device)
+            if self.radius[i] is not None: self.radius[i] = self.radius[i].to(device)
+            if self.directions[i] is not None: self.directions[i] = self.directions[i].to(device)
 
     
 class ConcatBatcher(object):

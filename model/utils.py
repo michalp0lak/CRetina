@@ -5,6 +5,7 @@ import torch.nn.functional as F
 from itertools import product as product
 import numpy as np
 from math import ceil
+import time
 
 # Network blocks
 def conv_bn(inp, oup, stride = 1, leaky = 0):
@@ -86,6 +87,7 @@ class Prior2DBoxGenerator(object):
                                 anchors += [cx, cy, s_kx, s_ky*a_ratio]
 
         output = torch.tensor(anchors, device=device).view(-1, 4)
+        
         if self.clip:
             output.clamp_(max=1, min=0)
         return output
@@ -179,17 +181,16 @@ def matrix_iof(a, b):
     area_a = np.prod(a[:, 2:] - a[:, :2], axis=1)
     return area_i / np.maximum(area_a[:, np.newaxis], 1)
 
-class BBoxCoder(object):
-    """Bbox Coder for 3D boxes.
-    Args:
-        code_size (int): The dimension of boxes to be encoded.
+class BoxCoder(object):
+    """
+        Bbox Coder for 2D boxes.
     """
 
     def __init__(self, variances):
-        super(BBoxCoder, self).__init__()
+        super(BoxCoder, self).__init__()
         self.variances = variances
 
-    def encode(self, targets, priors):
+    def encode(self, target_boxes, priors):
         """Encode the variances from the priorbox layers into the ground truth boxes
         we have matched (based on jaccard overlap) with the prior boxes.
         Args:
@@ -203,17 +204,17 @@ class BBoxCoder(object):
         """
 
         # dist b/t match center and prior's center
-        center_diff = (targets[:, :2] + targets[:, 2:])/2 - priors[:, :2]
+        center_diff = (target_boxes[:, :2] + target_boxes[:, 2:])/2 - priors[:, :2]
         # encode variance
         center_diff /= (self.variances[0] * priors[:, 2:])
         # match wh / prior wh
-        dim_diff = (targets[:, 2:] - targets[:, :2]) / priors[:, 2:]
+        dim_diff = (target_boxes[:, 2:] - target_boxes[:, :2]) / priors[:, 2:]
         g_wh = torch.log(dim_diff) / self.variances[1]
         # return target for smooth_l1_loss
         return torch.cat([center_diff, dim_diff], 1)  # [num_priors,4]
 
     # Adapted from https://github.com/Hakuyume/chainer-ssd
-    def decode(self, predictions, priors):
+    def decode(self, predicted_boxes, priors):
         """Decode locations from predictions using priors to undo
         the encoding we did for offset regression at train time.
         Args:
@@ -227,60 +228,154 @@ class BBoxCoder(object):
         """
 
         boxes = torch.cat((
-            priors[:, :2] + predictions[:, :2] * self.variances[0] * priors[:, 2:],
-            priors[:, 2:] * torch.exp(predictions[:, 2:] * self.variances[1])), 1)
+            priors[:, :2] +  predicted_boxes[:, :2] * self.variances[0] * priors[:, 2:],
+            priors[:, 2:] * torch.exp( predicted_boxes[:, 2:] * self.variances[1])), 1)
 
         boxes[:, :2] -= boxes[:, 2:] / 2
         boxes[:, 2:] += boxes[:, :2]
 
         return boxes
 
-
-def encode(matched, priors, variances):
-    """Encode the variances from the priorbox layers into the ground truth boxes
-    we have matched (based on jaccard overlap) with the prior boxes.
-    Args:
-        matched: (tensor) Coords of ground truth for each prior in point-form
-            Shape: [num_priors, 4].
-        priors: (tensor) Prior boxes in center-offset form
-            Shape: [num_priors,4].
-        variances: (list[float]) Variances of priorboxes
-    Return:
-        encoded boxes (tensor), Shape: [num_priors, 4]
+class CenterCoder(object):
+    """
+        Center Coder for 2D C-centers.
     """
 
-    # dist b/t match center and prior's center
-    g_cxcy = (matched[:, :2] + matched[:, 2:])/2 - priors[:, :2]
-    # encode variance
-    g_cxcy /= (variances[0] * priors[:, 2:])
-    # match wh / prior wh
-    g_wh = (matched[:, 2:] - matched[:, :2]) / priors[:, 2:]
-    g_wh = torch.log(g_wh) / variances[1]
-    # return target for smooth_l1_loss
-    return torch.cat([g_cxcy, g_wh], 1)  # [num_priors,4]
+    def __init__(self, variances):
+        super(CenterCoder, self).__init__()
+        self.variances = variances
 
-# Adapted from https://github.com/Hakuyume/chainer-ssd
-def decode(loc, priors, variances):
-    """Decode locations from predictions using priors to undo
-    the encoding we did for offset regression at train time.
-    Args:
-        loc (tensor): location predictions for loc layers,
-            Shape: [num_priors,4]
-        priors (tensor): Prior boxes in center-offset form.
-            Shape: [num_priors,4].
-        variances: (list[float]) Variances of priorboxes
-    Return:
-        decoded bounding box predictions
+    def encode(self, target_centers, priors):
+
+        """Encode the variances from the priorbox layers into the ground truth centers
+        we have matched (based on jaccard overlap) with the prior boxes.
+        Args:
+            target_centers: (tensor) Center coords of ground truth for each prior in point-form
+                Shape: [num_priors, 2].
+            priors: (tensor) Prior in center-offset form
+                Shape: [num_priors,4].
+            variances: (list[float]) Variances of priorboxes
+        Return:
+            encoded center points (tensor), Shape: [num_priors, 4]
+        """
+        # Get offset between prior center and assigned ground truth center point 
+        g_cxcy = target_centers[:,:2] - priors[:,:2]
+        # encode variance
+        g_cxcy /= (self.variances[0] * priors[:, 2:])
+        # return target for smooth_l1_loss
+        return g_cxcy
+
+    def decode(self, predicted_centers, priors):
+        """Decode center locations from predictions using priors to undo
+        the encoding we did for offset regression at train time.
+        Args:
+            predicted_centers (tensor): center offset-to-prior predictions
+                Shape: [num_priors,2]
+            priors (tensor): Prior boxes in center-offset form.
+                Shape: [num_priors,4].
+            variances: (list[float]) Variances of priorboxes
+        Return:
+            decoded center predictions
+        """
+        centers = predicted_centers * self.variances[0] * priors[:, 2:] + priors[:,:2]
+
+        return centers
+
+class RadiusCoder(object):
+    """
+        radius Coder for C-radius.
     """
 
-    boxes = torch.cat((
-        priors[:, :2] + loc[:, :2] * variances[0] * priors[:, 2:],
-        priors[:, 2:] * torch.exp(loc[:, 2:] * variances[1])), 1)
+    def __init__(self, variances):
+        super(RadiusCoder, self).__init__()
+        self.variances = variances
 
-    boxes[:, :2] -= boxes[:, 2:] / 2
-    boxes[:, 2:] += boxes[:, :2]
+    def encode(self, target_radius, priors):
 
-    return boxes
+        """Encode the variances from the priorbox layers into the ground truth radius
+        we have matched (based on jaccard overlap) with the prior boxes.
+        Args:
+            target_radius: (tensor) Center coords of ground truth for each prior in point-form
+                Shape: [num_priors, 1].
+            priors: (tensor) Prior in center-offset form
+                Shape: [num_priors,4].
+            variances: (list[float]) Variances of priorboxes
+        Return:
+            encoded radius (tensor), Shape: [num_priors, 1]
+        """
+        
+        # Get offset between prior bigger dim and assigned ground truth radius
+        radius_diff = torch.log(target_radius/torch.max(priors[:, 2:], dim=1, keepdim=True).values)
+        # encode variance
+        radius_diff /= self.variances[1]
+
+        # return target for smooth_l1_loss
+        return radius_diff
+
+    def decode(self, predicted_radius, priors):
+        """Decode center locations from predictions using priors to undo
+        the encoding we did for offset regression at train time.
+        Args:
+            predicted_centers (tensor): center offset-to-prior predictions
+                Shape: [num_priors,2]
+            priors (tensor): Prior boxes in center-offset form.
+                Shape: [num_priors,2].
+            variances: (list[float]) Variances of priorboxes
+        Return:
+            decoded center predictions
+        """
+
+        radius = torch.exp(predicted_radius * self.variances[1]) * torch.max(priors[:, 2:], dim=1, keepdim=True).values
+
+        return radius
+
+class DirectionCoder(object):
+    """
+        Direction Coder for C-direction.
+    """
+
+    def __init__(self, variances):
+        super(DirectionCoderCoder, self).__init__()
+        self.variances = variances
+
+    def encode(self, target_radius, priors):
+
+        """Encode the variances from the priorbox layers into the ground truth direction
+        we have matched (based on jaccard overlap) with the prior boxes.
+        Args:
+            target_directions: (tensor) Center coords of ground truth for each prior in point-form
+                Shape: [num_priors, 1].
+            priors: (tensor) Prior in center-offset form
+                Shape: [num_priors,4].
+            variances: (list[float]) Variances of priorboxes
+        Return:
+            encoded radius (tensor), Shape: [num_priors, 1]
+        """
+
+        # Get offset between prior bigger dim and assigned ground truth radius
+        radius_diff = torch.log(target_radius/torch.max(priors[:, 2:], dim=1, keepdim=True).values)
+        # encode variance
+        radius_diff /= self.variances[1]
+
+        # return target for smooth_l1_loss
+        return radius_diff
+
+    def decode(self, predicted_radius, priors):
+        """Decode center locations from predictions using priors to undo
+        the encoding we did for offset regression at train time.
+        Args:
+            predicted_centers (tensor): center offset-to-prior predictions
+                Shape: [num_priors,2]
+            priors (tensor): Prior boxes in center-offset form.
+                Shape: [num_priors,2].
+            variances: (list[float]) Variances of priorboxes
+        Return:
+            decoded center predictions
+        """
+
+        radius = torch.exp(predicted_radius * self.variances[1]) * torch.max(priors[:, 2:], dim=1, keepdim=True).values
+
+        return radius
 
 def log_sum_exp(x):
     """Utility function for computing log_sum_exp while determining

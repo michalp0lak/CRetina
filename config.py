@@ -63,11 +63,17 @@ class Config(object):
             cfg.global_args.device = 'cuda'
         if (cfg.global_args.__getattr__('device') != 'cuda'):
              cfg.global_args.device = 'cuda'
+
+        cfg.dataset.seed = cfg.global_args.seed
+        cfg.pipeline.seed = cfg.global_args.seed
+        cfg.model.seed = cfg.global_args.seed
         
         cfg.model.device = cfg.global_args.device
 
         cfg.pipeline.device = cfg.global_args.device
         cfg.pipeline.log_dir = cfg.global_args.output_path
+        cfg.pipeline.model_name = cfg.model.model_name
+        cfg.pipeline.dataset_name = cfg.dataset.dataset_name
 
         cfg.model.augment['image_size'] = cfg.model[cfg.model['backbone']]['image_size']
         cfg.model.head['image_size'] = cfg.model[cfg.model['backbone']]['image_size']

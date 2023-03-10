@@ -114,6 +114,12 @@ class OvalSimulator():
         polygon = cv2.ellipse2Poly(center_coordinates, axesLength, int(np.rad2deg(angle)), 0, 360, 1)
         bbox = (np.min(polygon, axis = 0)-line_t).tolist() + (np.max(polygon, axis = 0)+line_t).tolist()
 
+        # Add offset to bbox coords, so objects are not sticked to each other
+        bbox[0] = max([0, bbox[0]-10])
+        bbox[1] = max([0, bbox[1]-10])
+        bbox[2] = min([width, bbox[2]+10])
+        bbox[3] = min([height, bbox[3]+10])
+
         polygon = cv2.ellipse2Poly(center_coordinates, axesLength, int(np.rad2deg(angle)), oval_start, oval_end, 1)
         label_bbox = (np.min(polygon, axis = 0)-line_t).tolist() + (np.max(polygon, axis = 0)+line_t).tolist()
 

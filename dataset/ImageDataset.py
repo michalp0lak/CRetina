@@ -57,25 +57,26 @@ class ImageSplit(BaseDatasetSplit):
 
         labels = []
         boxes = []
-        center = []
+        centers = []
         radius = []
-        direction = []
+        directions = []
 
         for oval in anot:
             if (oval['class'] == 0) or (oval['class'] == 1): 
                 labels.append(1)
                 boxes.append(oval['label_bbox'])
-                center.append(oval['center'])
+                centers.append(oval['center'])
                 radius.append(oval['axes'][0])
-                direction.append(np.deg2rad(oval['orientation']))
+                directions.append(np.deg2rad(oval['orientation']))
+
 
         labels = np.asarray(labels)
         boxes = np.asarray(boxes).astype(np.float32)
-        center = np.asarray(center).astype(np.float32)
+        centers = np.asarray(centers).astype(np.float32)
         radius = np.asarray(radius).astype(np.float32)
-        direction = np.asarray(direction).astype(np.float32)/(2*np.pi)
+        directions = np.asarray(directions).astype(np.float32)
 
-        return {'image': img, 'labels': labels, 'boxes': boxes, 'centers': center, 'radius': radius, 'directions': direction}
+        return {'image': img, 'labels': labels, 'boxes': boxes, 'centers': centers, 'radius': radius, 'directions': directions}
 
     def get_attr(self, idx):
 

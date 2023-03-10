@@ -1,5 +1,5 @@
 import sys
-sys.path.append('/home/michal/Desktop/Dev/Retinaface/')
+sys.path.append('/home/michal/Desktop/Dev/RetinaC/')
 import logging
 from dataset.ImageDataset import Dataset
 from model.RetNet import RetinaShape
