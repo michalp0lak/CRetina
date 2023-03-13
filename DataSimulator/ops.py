@@ -91,7 +91,7 @@ def calculate_ellipse_pixel(center, axes, angle, ang):
     u = np.cos(np.deg2rad(ang))*axes[0]
     v = np.sin(np.deg2rad(ang))*axes[1]
 
-    x = u*Sin - v*Cos+ center[0]
+    x = u*Sin - v*Cos + center[0]
     y = u*Cos - v*Sin + center[1]
     coords.append([x,y])
 

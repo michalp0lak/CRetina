@@ -5,7 +5,7 @@ global_args:
   output_path: /home/michal/Desktop/Data/OvalDetector/
 
 dataset:
-  dataset_path: /home/michal/Desktop/Data/C_detection/2023-03-02_14-26-28/
+  dataset_path: /home/michal/Desktop/Data/C_detection/2023-03-10_14-48-33/
   dataset_name: 'SimulatedOvals'
   use_cache: False
   
@@ -45,7 +45,7 @@ model:
     # NMS params
     nms_top_k: 1000
     nms_thresh: 0.1
-    score_thr: 0.35
+    score_thr: 0.1
     # Positive IOU threshold
     iou_thr: 0.4
   
@@ -55,15 +55,15 @@ model:
 pipeline:
   name: ObjectDetection
   inference_mode: True
-  is_resume: False
-  resume_from: 2023-03-10-11-35-29
-  max_epoch: 20
+  is_resume: True
+  resume_from: 2023-03-13-10-45-12
+  max_epoch: 200
   validation_freq: 5
   save_ckpt_freq: 5
   ngpu: 1
   gpu_train: True
   num_workers: 6
-  overlaps: [0.3]
+  overlaps: [0.5]
   gamma: 0.1
 
   loss:
@@ -71,7 +71,7 @@ pipeline:
     loc_weight: 2.0
     center_weight: 1.0
     radius_weight: 1.0
-    dir_weight: 1.0
+    dir_weight: 10.0
 
   optimizer:
     lr: 0.001

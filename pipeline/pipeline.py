@@ -109,10 +109,10 @@ class ObjectDetection(BasePipeline):
        
         if labels is None:
             for box, center, rad, direction in zip(boxes, centers, radius, dirs):
-                dicts.append({'box': box, 'center': center, 'radius': rad, 'dir': direction})
+                dicts.append({'box': box, 'center': center, 'radius': rad, 'direction': direction})
         else:
             for box, center, rad, direction, label in zip(boxes, centers, radius, dirs, labels):
-                dicts.append({'box': box, 'center': center, 'radius': rad, 'dir': direction, 'label': label})
+                dicts.append({'label': label, 'box': box, 'center': center, 'radius': rad, 'direction': direction})
 
         return dicts
 
@@ -124,12 +124,12 @@ class ObjectDetection(BasePipeline):
         """
 
         box_dicts = {
+            'label': torch.empty((len(boxes),)).to(self.device),
+            'score': torch.empty((len(boxes),)).to(self.device),
             'box': torch.empty((len(boxes), 4)).to(self.device),
             'center': torch.empty((len(boxes), 2)).to(self.device),
             'radius': torch.empty((len(boxes),)).to(self.device),
-            'dir': torch.empty((len(boxes),)).to(self.device),
-            'label': torch.empty((len(boxes),)).to(self.device),
-            'score': torch.empty((len(boxes),)).to(self.device)
+            'direction': torch.empty((len(boxes),)).to(self.device)
                     }
 
         for i in range(len(boxes)):
@@ -196,14 +196,15 @@ class ObjectDetection(BasePipeline):
                                 shuffle=False)
 
         idx = random.sample(range(0, len(test_dataset)), 1)
-        #idx = [117]
+        idx = [50]
         data_item = test_split.__getitem__(idx[0])
         print(idx[0])
         print(data_item['attr'])
 
         predicted_items = self.run_inference(data_item)
     
-        data = data_item['data']          
+        data = data_item['data']
+        print(data['image'].shape)          
         target = [self.transform_for_metric(self.transform_input_batch(boxes = torch.Tensor(data['boxes'].tolist()),
                                                                        centers = torch.Tensor(data['centers'].tolist()),
                                                                        radius = torch.Tensor(data['radius'].tolist()),
@@ -233,7 +234,7 @@ class ObjectDetection(BasePipeline):
         img = data['image']
         h,w = img.shape[:2]
 
-        for box, center, radius in zip(data['boxes'], data['centers'], data['radius']):
+        for box, center, radius, dirn in zip(data['boxes'], data['centers'], data['radius'], data['directions']):
 
             box[0::2] = w*box[0::2].clip(min=0, max=w)
             box[1::2] = h*box[1::2].clip(min=0, max=h)
@@ -248,33 +249,56 @@ class ObjectDetection(BasePipeline):
             endpoint = center.copy()
             endpoint[1] += radius
 
+            dirn -= np.pi/2
+
+            # Direction point
+            Cos = np.cos(np.deg2rad(0))
+            Sin = np.sin(np.deg2rad(0))
+            u = np.cos(dirn)*radius
+            v = np.sin(dirn)*radius
+            x = int(u*Sin - v*Cos + center[0])
+            y = int(u*Cos - v*Sin + center[1])
+
             img = cv2.rectangle(img,(box[0], box[1]),(box[2], box[3]),(255,0,0),1)
             img = cv2.circle(img, center, 0, color=(0,255,0), thickness=3)
-            img = cv2.line(img, center, endpoint, color = (255,255,0), thickness=1) 
-
+            img = cv2.line(img, center, endpoint, color = (255,255,0), thickness=1)
+            img = cv2.circle(img, (x,y), 0, color=(0,255,255), thickness=3)
 
         for item in predicted_items[0]:
 
             box = item['box']
             center = item['center']
             radius = item['radius']
+            dirn = item['direction']
 
             box[0::2] = w*box[0::2].clamp(min=0, max=w)
             box[1::2] = h*box[1::2].clamp(min=0, max=h)
             center[0] = w*center[0].clamp(min=0, max=w)
             center[1] = h*center[1].clamp(min=0, max=h)
             radius = radius*min(w,h)
-
+            
             box = box.detach().cpu().numpy().astype(np.int32)
             center = center.detach().cpu().numpy().astype(np.int32)
             radius = radius.detach().cpu().numpy().astype(np.int32)
-
+            dirn = dirn.detach().cpu().numpy().astype(np.float32)
+            
             endpoint = center.copy()
             endpoint[0] += radius
 
+            # Direction point
+            dirn -= np.pi/2
+            Cos = np.cos(np.deg2rad(0))
+            Sin = np.sin(np.deg2rad(0))
+            u = np.cos(dirn)*radius
+            v = np.sin(dirn)*radius
+            x = int(u*Sin - v*Cos + center[0])
+            y = int(u*Cos - v*Sin + center[1])
+
             img = cv2.rectangle(img,(box[0], box[1]),(box[2], box[3]),(0,0,255),1)
             img = cv2.circle(img, center, 0, color=(255,0,255), thickness=3)
-            img = cv2.line(img, center, endpoint, color = (60,150,255), thickness=1) 
+            img = cv2.line(img, center, endpoint, color = (60,150,255), thickness=1)
+            img = cv2.circle(img, (x,y), 0, color=(177, 206, 251), thickness=3)
+
 
         cv2.namedWindow("image", cv2.WINDOW_NORMAL)
         cv2.resizeWindow("image", 1300, 1600)
@@ -588,7 +612,7 @@ class ObjectDetection(BasePipeline):
                                 self.cfg.loss.loc_weight * loss['loss_box'],
                                 self.cfg.loss.center_weight * loss['loss_center'],
                                 self.cfg.loss.radius_weight * loss['loss_radius'],
-                                #self.cfg.loss.dir_weight * loss['loss_dir']
+                                self.cfg.loss.dir_weight * loss['loss_dir']
                                ]) 
  
                 self.optimizer.zero_grad()

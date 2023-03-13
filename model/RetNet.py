@@ -119,7 +119,7 @@ class RadiusHead(nn.Module):
         out = self.conv1x1(x)
         out = out.permute(0,2,3,1).contiguous()
 
-        return out.view(out.shape[0], -1, 2)
+        return out.view(out.shape[0], -1, 1)
 
 class DirectionHead(nn.Module):
     def __init__(self,inchannels=512,num_anchors=3):
@@ -180,6 +180,9 @@ class Head(nn.Module):
 
         self.BboxHead = self._make_bbox_head(fpn_num=self.fm_num, inchannels=self.channels, anchors_num=self.num_anchors)
         self.CenterHead = self._make_center_head(fpn_num=self.fm_num, inchannels=self.channels, anchors_num=self.num_anchors)
+        self.RadiusHead = self._make_radius_head(fpn_num=self.fm_num, inchannels=self.channels, anchors_num=self.num_anchors)
+        self.DirectionHead = self._make_direction_head(fpn_num=self.fm_num, inchannels=self.channels, anchors_num=self.num_anchors)
+
 
         self.box_coder = BoxCoder(self.variances)
         self.center_coder = CenterCoder(self.variances)
@@ -263,7 +266,7 @@ class Head(nn.Module):
         batch_radius = torch.empty(size=(predicted_bboxes.size(0), priors.size(0)),
                             device=predicted_bboxes.device, dtype=torch.int64)
         batch_dirs = torch.empty(size=(predicted_bboxes.size(0), priors.size(0)),
-                            device=predicted_bboxes.device, dtype=torch.int64)
+                            device=predicted_bboxes.device, dtype=torch.float32)
         batch_labels = torch.empty(size=(predicted_bboxes.size(0), priors.size(0)),
                                     device=predicted_bboxes.device, dtype=torch.int64)
 
@@ -568,11 +571,12 @@ class RetinaShape(BaseModel):
             # Radius Loss (Smooth L1)
             loss_radius = F.smooth_l1_loss(pred_radius[pos_idx].view(-1, 1), 
                                            radius[pos_idx].view(-1, 1), reduction='sum')
+
             # Direction Loss (Smooth L1)
             loss_dir = F.smooth_l1_loss(pred_dirs[pos_idx].view(-1, 2), 
-                                           torch.cat([torch.sin(dirs).unsqueeze(-1), 
-                                           torch.cos(dirs).unsqueeze(-1)], dim=1).view(-1, 2), 
-                                           reduction='sum')
+                                        torch.cat([torch.sin(dirs[pos_idx]).unsqueeze(-1), 
+                                        torch.cos(dirs[pos_idx]).unsqueeze(-1)], dim=1).view(-1, 2), 
+                                        reduction='sum')
 
         else:
 
@@ -627,7 +631,7 @@ class RetinaShape(BaseModel):
             for box, center, score, label, rad, direction in zip(pred_boxes, pred_centers, pred_scores, 
                                                                  pred_labels, pred_radius, pred_dirs):
         
-                inference_result[-1].append({'box': box, 'center': center, 'radius': rad,
-                                             'direction': direction, 'label': label, 'score': score})
+                inference_result[-1].append({'label': label, 'score': score, 'box': box, 'center': center, 'radius': rad,
+                                             'direction': direction})
 
         return inference_result

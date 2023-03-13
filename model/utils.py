@@ -209,7 +209,7 @@ class BoxCoder(object):
         center_diff /= (self.variances[0] * priors[:, 2:])
         # match wh / prior wh
         dim_diff = (target_boxes[:, 2:] - target_boxes[:, :2]) / priors[:, 2:]
-        g_wh = torch.log(dim_diff) / self.variances[1]
+        dim_diff = torch.log(dim_diff) / self.variances[1]
         # return target for smooth_l1_loss
         return torch.cat([center_diff, dim_diff], 1)  # [num_priors,4]
 
@@ -338,7 +338,7 @@ class DirectionCoder(object):
         super(DirectionCoder, self).__init__()
         self.variances = variances
 
-    def encode(self, target_radius, priors):
+    def encode(self, target_directions, priors):
 
         """Encode the variances from the priorbox layers into the ground truth direction
         we have matched (based on jaccard overlap) with the prior boxes.
@@ -353,14 +353,15 @@ class DirectionCoder(object):
         """
 
         # Get offset between prior bigger dim and assigned ground truth radius
-        radius_diff = torch.log(target_radius/torch.max(priors[:, 2:], dim=1, keepdim=True).values)
+        #radius_diff = torch.log(target_radius/torch.max(priors[:, 2:], dim=1, keepdim=True).values)
         # encode variance
-        radius_diff /= self.variances[1]
+        #radius_diff /= self.variances[1]
 
         # return target for smooth_l1_loss
-        return radius_diff
+        return target_directions
 
-    def decode(self, predicted_radius, priors):
+
+    def decode(self, predicted_directions, priors):
         """Decode center locations from predictions using priors to undo
         the encoding we did for offset regression at train time.
         Args:
@@ -373,10 +374,8 @@ class DirectionCoder(object):
             decoded center predictions
         """
 
-        radius = torch.exp(predicted_radius * self.variances[1]) * torch.max(priors[:, 2:], dim=1, keepdim=True).values
-
-        return radius
-
+        return torch.atan2(predicted_directions[:,0], predicted_directions[:,1])
+        
 def log_sum_exp(x):
     """Utility function for computing log_sum_exp while determining
     This will be used to determine unaveraged confidence loss across
