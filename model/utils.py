@@ -5,7 +5,6 @@ import torch.nn.functional as F
 from itertools import product as product
 import numpy as np
 from math import ceil
-import time
 
 # Network blocks
 def conv_bn(inp, oup, stride = 1, leaky = 0):
@@ -39,7 +38,6 @@ def conv_dw(inp, oup, stride, leaky=0.1):
         nn.LeakyReLU(negative_slope= leaky,inplace=True),
     )
 
-# Priors generator
 class Prior2DBoxGenerator(object):
 
     def __init__(self,
@@ -52,45 +50,107 @@ class Prior2DBoxGenerator(object):
         super(Prior2DBoxGenerator, self).__init__()
         self.steps = steps
         self.aspects = aspects
-        self.min_sizes = sizes
+        self.sizes = sizes
         self.image_size = image_size
         self.clip = clip
         self.feature_maps = [[ceil(self.image_size[0]/step), ceil(self.image_size[1]/step)] for step in self.steps]
 
-    def forward(self, device):
-        anchors = []
+    def forward_v1(self, device):
 
-        for k, f in enumerate(self.feature_maps):
-            min_sizes = self.min_sizes[k]
-            for i, j in product(range(f[0]), range(f[1])):
-                for l, a_ratio in enumerate(self.aspects):
-                    for min_size in min_sizes:
+        priors = []
 
-                        if a_ratio == 1:
-                            s_kx = min_size / self.image_size[1]
-                            s_ky = min_size / self.image_size[0]
+        for k, feature_map in enumerate(self.feature_maps):
 
-                            dense_cx = [x * self.steps[k] / self.image_size[1] for x in [j + 0.5]]
-                            dense_cy = [y * self.steps[k] / self.image_size[0] for y in [i + 0.5]]
+            fmap_sizes = self.sizes[k]
+
+            x = torch.arange(0.5, feature_map[1]+0.5,1, device=device)*(self.steps[k]/self.image_size[1])
+            y = torch.arange(0.5, feature_map[0]+0.5,1, device=device)*(self.steps[k]/self.image_size[0])
+
+            grid = torch.meshgrid(y, x, indexing='ij')
+            prior_centers = torch.cat([grid[1].reshape(-1,1), grid[0].reshape(-1,1)], dim=-1)
             
-                            for cy, cx in product(dense_cy, dense_cx):
-                                anchors += [cx, cy, s_kx, s_ky]
-                        else:
-                            s_kx = min_size / self.image_size[1]
-                            s_ky = min_size / self.image_size[0]
+            prior_dims = []
 
-                            dense_cx = [x * self.steps[k] / self.image_size[1] for x in [j + 0.5]]
-                            dense_cy = [y * self.steps[k] / self.image_size[0] for y in [i + 0.5]]
-            
-                            for cy, cx in product(dense_cy, dense_cx):
-                                anchors += [cx, cy, s_kx*a_ratio, s_ky]
-                                anchors += [cx, cy, s_kx, s_ky*a_ratio]
+            for ratio in self.aspects:
+                for size in fmap_sizes:
 
-        output = torch.tensor(anchors, device=device).view(-1, 4)
+
+                    if ratio == 1:
+                        
+                        prior_dims_e = torch.tensor([size / self.image_size[1], size / self.image_size[0]], 
+                            device=device).unsqueeze(0)
+                        prior_dims.append(prior_dims_e)
+
+                    else:
+                        prior_dims_v = torch.tensor([ratio*size / self.image_size[1], size / self.image_size[0]], 
+                            device=device).unsqueeze(0)
+                        prior_dims.append(prior_dims_v)
+
+                        prior_dims_h = torch.tensor([size / self.image_size[1], ratio*size / self.image_size[0]], 
+                            device=device).unsqueeze(0)
+                        prior_dims.append(prior_dims_h)
+                
+
+            prior_dims = torch.cat(prior_dims, dim=0)
+            prior_num = prior_dims.size(0)
+            prior_dims = prior_dims.repeat(prior_centers.size(0), 1)
+            prior_centers = torch.repeat_interleave(prior_centers, prior_num, dim=0)
+            priors_fmap = torch.cat([prior_centers,prior_dims], dim=-1)
+            priors.append(priors_fmap)
         
+        priors = torch.cat(priors)
+
         if self.clip:
-            output.clamp_(max=1, min=0)
-        return output
+            priors.clamp_(max=1, min=0)
+
+        return priors
+
+    def forward_v2(self, device):
+
+        priors = []
+
+        for k, feature_map in enumerate(self.feature_maps):
+
+            fmap_sizes = self.sizes[k]
+
+            x = torch.arange(0.5, feature_map[1]+0.5,1, device=device)*(self.steps[k]/self.image_size[1])
+            y = torch.arange(0.5, feature_map[0]+0.5,1, device=device)*(self.steps[k]/self.image_size[0])
+
+            grid = torch.meshgrid(x, y, indexing='ij')
+            prior_centers = torch.cat([grid[0].reshape(-1,1), grid[1].reshape(-1,1)], dim=-1)
+
+            fmap_priors = []
+
+            for size in fmap_sizes:
+
+                prior_dims = torch.tensor([size / self.image_size[1],size / self.image_size[0]], 
+                                          device=device).unsqueeze(0).repeat(prior_centers.size(0), 1)
+                
+                priors_single = torch.cat([prior_centers, prior_dims], dim=-1)
+
+                for ratio in self.aspects:
+
+                    if ratio == 1:
+
+                        fmap_priors.append(priors_single)
+
+                    else:
+                        priors_single_v= priors_single.clone()
+                        priors_single_v[:,2] *= ratio  
+                        fmap_priors.append(priors_single_v)
+                        priors_single_h= priors_single.clone()
+                        priors_single_h[:,3] *= ratio  
+                        fmap_priors.append(priors_single_h)
+
+            fmap_priors = torch.cat(fmap_priors, dim = 1)
+            priors.append(fmap_priors.view(-1,4))
+
+        priors = torch.cat(priors)
+
+        if self.clip:
+            priors.clamp_(max=1, min=0)
+
+        return priors
 
 
 def point_form(boxes):
@@ -373,8 +433,12 @@ class DirectionCoder(object):
         Return:
             decoded center predictions
         """
+        predicted_angle = torch.atan2(predicted_directions[:,0], predicted_directions[:,1])
+        
+        # atan2 returns angle in [-pi;pi] interval, so here angle is transformed to [0;2*pi] interval
+        predicted_angle[predicted_angle < 0] += 2*torch.pi
 
-        return torch.atan2(predicted_directions[:,0], predicted_directions[:,1])
+        return predicted_angle
         
 def log_sum_exp(x):
     """Utility function for computing log_sum_exp while determining

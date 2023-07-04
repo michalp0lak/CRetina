@@ -122,8 +122,6 @@ class OvalSimulator():
 
         polygon = cv2.ellipse2Poly(center_coordinates, axesLength, int(np.rad2deg(angle)), oval_start, oval_end, 1)
         label_bbox = (np.min(polygon, axis = 0)-line_t).tolist() + (np.max(polygon, axis = 0)+line_t).tolist()
-
-        orientation += angle
   
         return {'class': oval_shape,'center': center_coordinates, 'axes':axesLength, 'angle': angle, 'bbox': bbox,
                 'label_bbox': label_bbox, 'occlusion': [oval_start, oval_end], 'orientation': orientation,'line': line_t}

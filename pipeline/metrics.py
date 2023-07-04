@@ -133,19 +133,18 @@ class MetricEvaluator():
                 # For each predicted item, index of best matching target
                 target_idx = torch.argmax(overlap_label, axis=1)
 
-                # Evaluate L2 norm error for all predicted items (for regressed parameters - center, radius, direction)
-                center_L2 = 0.5*torch.sum((pred['center']-target['center'][target_idx])**(2), dim=1)
-                radius_L2 = (pred['radius']-target['radius'][target_idx])**(2)
-                direction_L2 = (pred['direction']-target['direction'][target_idx])**(2)
-                print(pred['direction'])
-                print(target['direction'][target_idx])
+                # Evaluate L1 norm error for all predicted items (for regressed parameters - center, radius, direction)
+                center_L1 = 0.5*torch.sum(torch.abs(pred['center']-target['center'][target_idx]), dim=1)
+                radius_L1 = torch.abs(pred['radius']-target['radius'][target_idx])
+                direction_L1 = torch.abs(pred['direction']-target['direction'][target_idx])
+
                 # Remove false positive errors -> misclasified items should not contribute for regressed params error
                 # We want error just for true positives (best matches), flase positives will be assigned with 0 value
 
-                center_L2[torch.logical_not(global_cond)] = 0 
-                radius_L2[torch.logical_not(global_cond)] = 0
-                direction_L2[torch.logical_not(global_cond)] = 0
-                print(direction_L2)
+                center_L1[torch.logical_not(global_cond)] = 0 
+                radius_L1[torch.logical_not(global_cond)] = 0
+                direction_L1[torch.logical_not(global_cond)] = 0
+
                 true_positive[global_cond] = 1
                 false_positive[global_cond] = 0
 
@@ -154,7 +153,7 @@ class MetricEvaluator():
 
                 detection[i, pred_idx_l,:] = torch.stack([pred_label['score'], 
                                                         true_positive, false_positive,
-                                                        center_L2, radius_L2, direction_L2], 
+                                                        center_L1, radius_L1, direction_L1], 
                                                         axis=-1)     
             else:
 
@@ -223,13 +222,14 @@ class MetricEvaluator():
         # Matrix to store precision and recall for each class
         recall = torch.zeros((len(classes), 1)).to(self.device)
         precision = torch.zeros((len(classes), 1)).to(self.device)
-        center_mse = torch.zeros((len(classes), 1)).to(self.device)
-        radius_mse = torch.zeros((len(classes), 1)).to(self.device)
-        direction_mse = torch.zeros((len(classes), 1)).to(self.device)
+        center_mae = torch.zeros((len(classes), 1)).to(self.device)
+        radius_mae = torch.zeros((len(classes), 1)).to(self.device)
+        direction_mae = torch.zeros((len(classes), 1)).to(self.device)
 
         # for every class
         for i in range(len(classes)):
 
+            valid_items = detection[i,:,1] == 1
             # Recall
             recall[i] = 100 * (detection[i,:,1].sum()/(detection[i,:,1].sum()+fns[i]))
 
@@ -237,12 +237,18 @@ class MetricEvaluator():
             precision[i] = 100 * (detection[i,:,1].sum()/(detection[i,:,1].sum()+detection[i,:,2].sum()))
 
             #Center MSE
-            center_mse[i] = torch.mean(detection[i,:,3])
+            center_mae[i] = torch.mean(detection[i,valid_items,3])
 
             #Radius MSE
-            radius_mse[i] = torch.mean(detection[i,:,4])
+            radius_mae[i] = torch.mean(detection[i,valid_items,4])
 
             #Direction MSE
-            direction_mse[i] = torch.mean(detection[i,:,5])
+            direction_mae[i] = torch.mean(detection[i,valid_items,5])
 
-        return precision.cpu().detach().numpy(), recall.cpu().detach().numpy()
+            recall = recall.cpu().detach().numpy()
+            precision = precision.cpu().detach().numpy()
+            center_mae = center_mae.cpu().detach().numpy()
+            radius_mae = radius_mae.cpu().detach().numpy()
+            direction_mae = direction_mae.cpu().detach().numpy()
+
+        return precision, recall, center_mae, radius_mae, direction_mae, 

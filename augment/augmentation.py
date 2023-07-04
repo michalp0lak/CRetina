@@ -11,7 +11,6 @@ class Augmentation():
     def __init__(self, cfg, seed=None):
 
         self.img_dim = cfg['image_size']
-        self.rgb_means = cfg['rgb_means']
 
     def crop(self, image, boxes, labels, img_dim):
 
@@ -192,26 +191,27 @@ class Augmentation():
 
         return image, boxes, centers, directions
 
-    def pad_to_square(self, image, rgb_mean, pad_image_flag):
+    def pad_to_square(self, image, pad_image_flag):
 
         if not pad_image_flag:
             return image
 
-        height, width, _ = image.shape
+        height, width, depth = image.shape
         long_side = max(width, height)
-        image_t = np.empty((long_side, long_side, 3), dtype=image.dtype)
-        image_t[:, :] = rgb_mean
+        image_t = np.empty((long_side, long_side, depth), dtype=image.dtype)
+        image_t[:, :] = 0
         image_t[0:0 + height, 0:0 + width] = image
 
         return image_t
 
-    def resize_subtract_mean(self, image, insize, rgb_mean):
+    def resize(self, image, insize):
 
         interp_methods = [cv2.INTER_LINEAR, cv2.INTER_CUBIC, cv2.INTER_AREA, cv2.INTER_NEAREST, cv2.INTER_LANCZOS4]
         interp_method = interp_methods[random.randrange(5)]
- 
         image = cv2.resize(image, (insize, insize), interpolation=interp_method)
-        #image = (image-rgb_mean)
+        
+        if len(image.shape) == 2:
+            image = np.expand_dims(image,-1)
 
         return image
 
@@ -232,7 +232,7 @@ class Augmentation():
         radius_t = radius.copy()
         directions_t = directions.copy()
         labels_t = labels.copy()
-        
+
         # Crop
         #if split in ['training']:
         #    image_t, boxes_t, labels_t, pad_image_flag = self.crop(image, boxes, labels, self.img_dim)
@@ -243,21 +243,23 @@ class Augmentation():
         # Pad to square if not square 
         # (for batch processing we resize all images in batch to the same square size, so we don't have to change aspect ratio if it's padded)
         if split in ['training', 'validation']:
-            image_t = self.pad_to_square(image_t, self.rgb_means, pad_image_flag=True)
+            image_t = self.pad_to_square(image_t, pad_image_flag=True)
 
         # Mirror
-        if split in ['training']:
-            image_t, boxes_t, centers_t, directions_t = self.mirror(image_t, boxes_t, centers_t, directions_t)
+        #if split in ['training']:
+        #    image_t, boxes_t, centers_t, directions_t = self.mirror(image_t, boxes_t, centers_t, directions_t)
 
         # Get image dims before resizing for bboxes coords calculation
         height, width, _ = image_t.shape
 
         # Resize image to required shape and substract mean
         if split in ['training', 'validation']:
-            image_t = self.resize_subtract_mean(image_t, self.img_dim, self.rgb_means)
-        
+            image_t = self.resize(image_t, self.img_dim)
+
         # Cast image to float and normalize between [0,1]
-        image = image.astype(np.float32)/255
+
+        #!!!!!! Hele normalizujes neco co nevracis pro trenink -> model pracuje s [0-255] a ne s [0-1]
+        image_t = image_t.astype(np.float32)/255
 
         # Get relative location of C box
         boxes_t[:, 0::2] /= width

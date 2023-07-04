@@ -182,7 +182,7 @@ class ObjectDetectBatch(object):
             self.attr.append(batch_item['attr'])
             
             data = batch_item['data']
-      
+
             self.images.append(torch.tensor(data['image'], dtype=torch.float32))
             self.labels.append(torch.tensor(data['labels'], dtype=torch.int32) if 'labels' in data else None)
             
@@ -203,7 +203,7 @@ class ObjectDetectBatch(object):
                 self.radius.append(torch.zeros((0, 1)))
                 self.directions.append(torch.zeros((0, 1)))
 
-        self.images = torch.stack(self.images,0).permute((0,3,1,2))        
+        self.images = torch.stack(self.images,0).permute((0,3,1,2))    
 
     def pin_memory(self):
 

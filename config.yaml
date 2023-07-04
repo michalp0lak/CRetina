@@ -5,14 +5,14 @@ global_args:
   output_path: /home/michal/Desktop/Data/OvalDetector/
 
 dataset:
-  dataset_path: /home/michal/Desktop/Data/C_detection/2023-03-10_14-48-33/
+  dataset_path: /home/michal/Desktop/Data/C_detection/2023-03-22_11-47-02/
   dataset_name: 'SimulatedOvals'
   use_cache: False
   
 model:
   model_name: 'RetinaC'
   backbone: 'mobilenet'
-  pretrained: True
+  pretrained: False
   classes: ['C']
 
   mobilenet:
@@ -37,27 +37,27 @@ model:
     # Priors
     steps: [8, 16, 32]
     aspects: [0.25, 0.5, 1]
-    sizes: [[8, 16], [32, 64], [128, 256]]
-    #sizes: [[4, 8], [16, 32], [64, 128]]
+    sizes: [[8, 12], [16,24], [32, 48]]
+    #sizes: [[8, 16], [32, 64], [128, 256]]
     variances: [0.1, 0.2]
     # Negative sampling ratio
     negpos_ratio: 7
     # NMS params
-    nms_top_k: 1000
+    nms_top_k: 2000
     nms_thresh: 0.1
     score_thr: 0.1
     # Positive IOU threshold
     iou_thr: 0.4
   
   augment:
-    rgb_means: [0, 0, 0] #[B,G,R]
+    image_size: []
 
 pipeline:
   name: ObjectDetection
-  inference_mode: True
-  is_resume: True
-  resume_from: 2023-03-13-10-45-12
-  max_epoch: 200
+  inference_mode: False
+  is_resume: False
+  resume_from: 2023-03-27-12-00-06
+  max_epoch: 100
   validation_freq: 5
   save_ckpt_freq: 5
   ngpu: 1
@@ -70,7 +70,6 @@ pipeline:
     cls_weight: 1.0
     loc_weight: 2.0
     center_weight: 1.0
-    radius_weight: 1.0
     dir_weight: 10.0
 
   optimizer:

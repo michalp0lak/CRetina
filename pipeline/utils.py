@@ -24,7 +24,6 @@ def latest_ckpt(train_ckpt_dir):
 
         ckpt_list.sort(key = natural_keys)
         ckpt_name = ckpt_list[-1]
-        ckpt_path = os.path.join(train_ckpt_dir, ckpt_name) 
 
         return os.path.join(train_ckpt_dir, ckpt_name)
        

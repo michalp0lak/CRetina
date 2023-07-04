@@ -102,7 +102,7 @@ class Simulation():
             # Draw axes
             if oval['axes'][0] == oval['axes'][1]:
                 
-                endpoint = calculate_ellipse_pixel(oval['center'], oval['axes'], 0, oval['orientation']-90)[0]
+                endpoint = calculate_ellipse_pixel(oval['center'], oval['axes'], 0, oval['orientation'])[0]
                 
                 img_canvas = cv2.line(img_canvas, (oval['center'][0], oval['center'][1]), 
                                     (endpoint[0],endpoint[1]), 

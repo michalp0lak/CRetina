@@ -2,7 +2,7 @@ import logging
 import re
 from datetime import datetime
 import os 
-from os.path import join, exists, dirname, abspath
+from os.path import join
 import random
 import math
 import yaml
@@ -12,7 +12,6 @@ import numpy as np
 import pandas as pd
 import torch
 import cv2
-import time
 
 from torch.utils.data import DataLoader
 from dataset.dataloaders import TorchDataloader, ConcatBatcher
@@ -165,6 +164,11 @@ class ObjectDetection(BasePipeline):
         """
 
         self.load_ckpt()
+        #i = 0
+        #for  name, param in self.model.named_parameters():
+        #    if i < 1:
+        #        print(name, param)
+        #    i += 1
         self.model.eval()
 
         # If run_inference is called on raw data.
@@ -176,7 +180,7 @@ class ObjectDetection(BasePipeline):
             }])
 
         data.to(self.device)
-        self.model.head.image_size = data.images.shape[-2:]
+        self.model.image_size = data.images.shape[-2:]
 
         with torch.no_grad():
 
@@ -190,13 +194,13 @@ class ObjectDetection(BasePipeline):
         test_dataset = self.dataset.get_split('testing')
         
         test_split = TorchDataloader(dataset=test_dataset,
-                                preprocess=self.model.preprocess,
-                                transform=self.model.transform,
-                                use_cache=False,
-                                shuffle=False)
+                                     preprocess=self.model.preprocess,
+                                     transform=self.model.transform,
+                                     use_cache=False,
+                                     shuffle=False)
 
         idx = random.sample(range(0, len(test_dataset)), 1)
-        idx = [50]
+        #idx = [160]
         data_item = test_split.__getitem__(idx[0])
         print(idx[0])
         print(data_item['attr'])
@@ -204,7 +208,7 @@ class ObjectDetection(BasePipeline):
         predicted_items = self.run_inference(data_item)
     
         data = data_item['data']
-        print(data['image'].shape)          
+
         target = [self.transform_for_metric(self.transform_input_batch(boxes = torch.Tensor(data['boxes'].tolist()),
                                                                        centers = torch.Tensor(data['centers'].tolist()),
                                                                        radius = torch.Tensor(data['radius'].tolist()),
@@ -215,23 +219,29 @@ class ObjectDetection(BasePipeline):
         prediction = [self.transform_for_metric(item) for item in predicted_items]
 
         # mAP metric evaluation for epoch over all validation data
-        precision, recall = self.ME.evaluate(prediction,
+        precision, recall, cmae, rmae, dmae = self.ME.evaluate(prediction,
                                              target,
                                              self.model.classes_ids,
                                              self.cfg.get("overlaps", [0.5]))
 
         print("")
-        print(f' {" ": <9} "==== Precision ==== Recall ==== F1 ====" ')
-       
-        precision = np.mean(precision[:, -1])
-        recall = np.mean(recall[:, -1])
-        f1 = 2*precision*recall/(precision+recall)
+        print(f' {" ": <3} "==== Precision ==== Recall ==== F1 ==== Cmae ==== Rmae ==== Dmae ====" ')
+        desc = ''
+        for i, c in enumerate(self.model.classes):
 
-        print("Overall_precision: {:.2f}".format(precision))
-        print("Overall_recall: {:.2f}".format(recall ))
-        print("F1: {:.2f}".format(f1))
+            p = precision[i,0]
+            rec = recall[i,0]
+            f1 = 2*p*rec/(p+rec)
+            ce = cmae[i,0]
+            re = rmae[i,0]
+            de = dmae[i,0]
 
-        img = data['image']
+            desc += f' {"{}".format(c): <9} {"{:.2f}".format(p): <14} {"{:.2f}".format(rec): <11} {"{:.2f}".format(f1)}'
+            desc += f' {"": <0.5} {"{:.5f}".format(ce): <9} {"{:.5f}".format(re): <9} {"{:.5f}".format(de)} '
+        print(desc)
+
+        img = data['image'].astype(np.uint8)*255
+        img = cv2.merge([img,img,img])
         h,w = img.shape[:2]
 
         for box, center, radius, dirn in zip(data['boxes'], data['centers'], data['radius'], data['directions']):
@@ -245,23 +255,19 @@ class ObjectDetection(BasePipeline):
             box = box.astype(np.int32)
             center = center.astype(np.int32)
             radius = radius.astype(np.int32)
-            
-            endpoint = center.copy()
-            endpoint[1] += radius
-
-            dirn -= np.pi/2
 
             # Direction point
+            dirn = 2*torch.pi - dirn
             Cos = np.cos(np.deg2rad(0))
             Sin = np.sin(np.deg2rad(0))
             u = np.cos(dirn)*radius
-            v = np.sin(dirn)*radius
-            x = int(u*Sin - v*Cos + center[0])
-            y = int(u*Cos - v*Sin + center[1])
+            v = np.sin(-dirn)*radius
+            x = int(u*Cos + v*Sin + center[0])
+            y = int(u*Sin - v*Cos + center[1])
 
             img = cv2.rectangle(img,(box[0], box[1]),(box[2], box[3]),(255,0,0),1)
             img = cv2.circle(img, center, 0, color=(0,255,0), thickness=3)
-            img = cv2.line(img, center, endpoint, color = (255,255,0), thickness=1)
+            img = cv2.line(img, center, (center[0], center[1]+radius[0]), color = (255,255,0), thickness=1)
             img = cv2.circle(img, (x,y), 0, color=(0,255,255), thickness=3)
 
         for item in predicted_items[0]:
@@ -276,28 +282,25 @@ class ObjectDetection(BasePipeline):
             center[0] = w*center[0].clamp(min=0, max=w)
             center[1] = h*center[1].clamp(min=0, max=h)
             radius = radius*min(w,h)
-            
+ 
             box = box.detach().cpu().numpy().astype(np.int32)
             center = center.detach().cpu().numpy().astype(np.int32)
             radius = radius.detach().cpu().numpy().astype(np.int32)
             dirn = dirn.detach().cpu().numpy().astype(np.float32)
-            
-            endpoint = center.copy()
-            endpoint[0] += radius
 
             # Direction point
-            dirn -= np.pi/2
+            dirn = 2*torch.pi - dirn
             Cos = np.cos(np.deg2rad(0))
             Sin = np.sin(np.deg2rad(0))
             u = np.cos(dirn)*radius
-            v = np.sin(dirn)*radius
-            x = int(u*Sin - v*Cos + center[0])
-            y = int(u*Cos - v*Sin + center[1])
+            v = np.sin(-dirn)*radius
+            x = int(u*Cos + v*Sin + center[0])
+            y = int(u*Sin - v*Cos + center[1])
 
             img = cv2.rectangle(img,(box[0], box[1]),(box[2], box[3]),(0,0,255),1)
             img = cv2.circle(img, center, 0, color=(255,0,255), thickness=3)
-            img = cv2.line(img, center, endpoint, color = (60,150,255), thickness=1)
-            img = cv2.circle(img, (x,y), 0, color=(177, 206, 251), thickness=3)
+            img = cv2.line(img, center, (center[0]+radius, center[1]), color = (60,150,255), thickness=1)
+            img = cv2.circle(img, (x,y), 0, color=(153, 204, 255), thickness=3)
 
 
         cv2.namedWindow("image", cv2.WINDOW_NORMAL)
@@ -349,7 +352,7 @@ class ObjectDetection(BasePipeline):
             for data in tqdm(testing_loader, desc='testing'):
             
                 data.to(self.device)
-                self.model.head.image_size = data.images.shape[-2:]
+                self.model.image_size = data.images.shape[-2:]
 
                 results = self.model(data)
                 boxes_batch = self.model.inference_end(results)
@@ -361,32 +364,48 @@ class ObjectDetection(BasePipeline):
                 prediction.extend([self.transform_for_metric(boxes) for boxes in boxes_batch])
 
         # mAP metric evaluation for epoch over all validation data
-        precision, recall = self.ME.evaluate(prediction,
+        precision, recall, cmae, rmae, dmae = self.ME.evaluate(prediction,
                                              target,
                                              self.model.classes_ids,
                                              self.cfg.get("overlaps", [0.5]))
         
         log.info("")
-        log.info(f' {" ": <9} "==== Precision ==== Recall ==== F1 ====" ')
+        log.info(f' {" ": <3} "==== Precision ==== Recall ==== F1 ==== Cmae ==== Rmae ==== Dmae ====" ')
+        desc = ''
         for i, c in enumerate(self.model.classes):
 
             p = precision[i,0]
             rec = recall[i,0]
             f1 = 2*p*rec/(p+rec)
-            log.info(f' {"{}".format(c): <15} {"{:.2f}".format(p): <15.5} {"{:.2f}".format(rec): <10} {"{:.2f}".format(f1)}')
+            ce = cmae[i,0]
+            re = rmae[i,0]
+            de = dmae[i,0]
+
+            desc += f' {"{}".format(c): <9} {"{:.2f}".format(p): <14} {"{:.2f}".format(rec): <11} {"{:.2f}".format(f1)}'
+            desc += f' {"": <0.5} {"{:.5f}".format(ce): <9} {"{:.5f}".format(re): <9} {"{:.5f}".format(de)}'
+            log.info(desc)
 
         precision = np.mean(precision[:, -1])
         recall = np.mean(recall[:, -1])
         f1 = 2*precision*recall/(precision+recall)
+        cmae = np.mean(cmae[:, -1])
+        rmae = np.mean(rmae[:, -1])
+        dmae = np.mean(dmae[:, -1])
 
         log.info("")
         log.info("Overall_precision: {:.2f}".format(precision))
-        log.info("Overall_recall: {:.2f}".format(recall ))
-        log.info("F1: {:.2f}".format(f1))
+        log.info("Overall_recall: {:.2f}".format(recall))
+        log.info("Overall_F1: {:.2f}".format(f1))
+        log.info("Overall_cmae: {:.5f}".format(cmae))
+        log.info("Overall_rmae: {:.5f}".format(rmae))
+        log.info("Overall_dmae: {:.5f}".format(dmae))
 
         precision = float(precision)
         recall = float(recall)
         f1 = float(f1)
+        cmae = float(cmae)
+        rmae = float(rmae)
+        dmae = float(dmae)
         
         test_protocol = {
             '0_model': self.cfg.get('model_name', None),
@@ -395,7 +414,10 @@ class ObjectDetection(BasePipeline):
             '3_date': datetime.now().strftime('%Y-%m-%d_%H:%M:%S'), 
             '4_precision': precision, 
             '5_recall': recall, 
-            '6_f1': f1
+            '6_f1': f1,
+            '7_cmae': cmae,
+            '8_rmae': rmae,
+            '9_dmae': dmae
                     }
 
         with open(test_folder + 'test_protocol.yaml', 'w') as outfile:
@@ -460,15 +482,13 @@ class ObjectDetection(BasePipeline):
                         self.valid_losses[l] = []
                         self.valid_losses[l].append(v.cpu().numpy())
 
-                # convert to bboxes for mAP evaluation
                 
                 boxes_batch = self.model.inference_end(results)
-                
+
+                 # convert Input and Output for metrics evaluation    
                 target.extend([self.transform_for_metric(self.transform_input_batch(boxes, centers, radius, dirs, labels=labels)) 
                                for boxes, centers, radius, dirs, labels in zip(data.boxes, data.centers, 
                                                                                data.radius, data.directions, data.labels)])
-
-
 
                 prediction.extend([self.transform_for_metric(boxes) for boxes in boxes_batch])
 
@@ -483,32 +503,49 @@ class ObjectDetection(BasePipeline):
         log.info(desc)
 
         # mAP metric evaluation for epoch over all validation data
-        precision, recall = self.ME.evaluate(prediction,
+        precision, recall, cmae, rmae, dmae = self.ME.evaluate(prediction,
                                              target,
                                              self.model.classes_ids,
                                              self.cfg.get("overlaps", [0.5]))
 
         log.info("")
-        log.info(f' {" ": <9} "==== Precision ==== Recall ==== F1 ====" ')
+        log.info(f' {" ": <3} "==== Precision ==== Recall ==== F1 ==== Cmae ==== Rmae ==== Dmae ====" ')
+        desc = ''
+
         for i, c in enumerate(self.model.classes):
 
             p = precision[i,0]
             rec = recall[i,0]
             f1 = 2*p*rec/(p+rec)
-            log.info(f' {"{}".format(c): <15} {"{:.2f}".format(p): <15.5} {"{:.2f}".format(rec): <10} {"{:.2f}".format(f1)}')
+            ce = cmae[i,0]
+            re = rmae[i,0]
+            de = dmae[i,0]
+
+            desc += f' {"{}".format(c): <9} {"{:.2f}".format(p): <14} {"{:.2f}".format(rec): <11} {"{:.2f}".format(f1)}'
+            desc += f' {"": <0.5} {"{:.5f}".format(ce): <9} {"{:.5f}".format(re): <9} {"{:.5f}".format(de)}'
+            log.info(desc)
 
         precision = np.mean(precision[:, -1])
         recall = np.mean(recall[:, -1])
         f1 = 2*precision*recall/(precision+recall)
+        cmae = np.mean(cmae[:, -1])
+        rmae = np.mean(rmae[:, -1])
+        dmae = np.mean(dmae[:, -1])
 
         log.info("")
         log.info("Overall_precision: {:.2f}".format(precision))
-        log.info("Overall_recall: {:.2f}".format(recall ))
-        log.info("F1: {:.2f}".format(f1))
+        log.info("Overall_recall: {:.2f}".format(recall))
+        log.info("Overall_F1: {:.2f}".format(f1))
+        log.info("Overall_cmae: {:.5f}".format(cmae))
+        log.info("Overall_rmae: {:.5f}".format(rmae))
+        log.info("Overall_dmae: {:.5f}".format(dmae))
         
         self.valid_losses["precision"] = precision
         self.valid_losses["recall"] = recall
         self.valid_losses["f1"] = f1
+        self.valid_losses["cmae"] = cmae
+        self.valid_losses["rmae"] = rmae
+        self.valid_losses["dmae"] = dmae
 
         return self.valid_losses
 
@@ -553,8 +590,8 @@ class ObjectDetection(BasePipeline):
             training_record = pd.read_csv(self.cfg.log_dir + '/training_record.csv', index_col=False)
         else:
             training_record = pd.DataFrame([],columns=['epoch', 'precision', 'recall', 'f1', 
-                                                       'class_loss', 'box_loss', 'center_loss',
-                                                       'radius_loss','direction_loss'])
+                                                       'center_error', 'radius_error', 
+                                                       'direction_error', 'loss_sum'])
 
         log.info("Started training")
         
@@ -589,13 +626,7 @@ class ObjectDetection(BasePipeline):
                 #lr = adjust_learning_rate(self.optimizer, self.cfg.optimizer.gamma, epoch,
                 #                          step_index, iteration, epoch_size)
 
-                #img = data.images[0].squeeze(0).permute(1,2,0).cpu().detach().numpy() 
-                #cv2.namedWindow("image", cv2.WINDOW_NORMAL)
-                #cv2.resizeWindow("image", 1300, 1600)
-                #cv2.imshow('image', img) 
-                #cv2.waitKey(0) 
-                #cv2.destroyAllWindows() 
-                #print(data.centers)
+    
                 data.to(self.device)
 
                 # If Pipeline should process batches of various image size, priors feature maps needs to adapt according
@@ -604,6 +635,7 @@ class ObjectDetection(BasePipeline):
                 # formed for forward pass.
 
                 #self.model.head.image_size = data.images.shape[-2:]
+
                 results = self.model(data)
 
                 loss = self.model.loss(results, data)
@@ -611,7 +643,6 @@ class ObjectDetection(BasePipeline):
                 loss_sum = sum([self.cfg.loss.cls_weight * loss['loss_cls'],
                                 self.cfg.loss.loc_weight * loss['loss_box'],
                                 self.cfg.loss.center_weight * loss['loss_center'],
-                                self.cfg.loss.radius_weight * loss['loss_radius'],
                                 self.cfg.loss.dir_weight * loss['loss_dir']
                                ]) 
  
@@ -648,11 +679,11 @@ class ObjectDetection(BasePipeline):
             if (epoch % self.cfg.get("validation_freq", 1)) == 0:
 
                 metrics = self.run_validation()
+                loss_total = metrics['loss_cls'][0] + metrics['loss_box'][0] + metrics['loss_center'][0] + \
+                             metrics['loss_dir'][0]
 
                 training_record.loc[epoch] = [epoch, metrics['precision'], metrics['recall'], metrics['f1'],
-                                              metrics['loss_cls'][0], metrics['loss_box'][0], metrics['loss_center'][0],
-                                              metrics['loss_radius'][0],metrics['loss_dir'][0]]
-
+                                              metrics['cmae'], metrics['rmae'], metrics['dmae'], loss_total]
 
                 actual_f1 = metrics['f1']
                 
@@ -662,8 +693,8 @@ class ObjectDetection(BasePipeline):
                     self.save_ckpt(epoch, save_best=True)
                     np.save(self.cfg.log_dir + '/metrics.npy', 
                             np.array([metrics['precision'], metrics['recall'], metrics['f1'],
-                                      metrics['loss_cls'][0], metrics['loss_box'][0], metrics['loss_center'][0],
-                                      metrics['loss_radius'][0], metrics['loss_dir'][0]]))
+                                      metrics['cmae'], metrics['rmae'], metrics['dmae'], loss_total]
+                                    ))
                 
             if epoch % self.cfg.save_ckpt_freq == 0:
                 self.save_ckpt(epoch,save_best=False)
