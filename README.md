@@ -142,14 +142,14 @@ python run_testing.py
         -	<b>batch_size</b> - Batch size used by dataloader.
         -	<b>image_size</b> – Image size used in preprocessing/augmentation stage.
         -	<b>return_layers</b> – Dictionary defining which items of backbone dictionary are returned as feature maps to Retina network. There are 3 feature maps.
-        -	<b>in_channel</b>: Input channel number of backbone.
-        -	<b>out_channel</b>: Output channel number of backbone.
+        -	<b>in_channel</b> - Input channel number of backbone.
+        -	<b>out_channel</b> - Output channel number of backbone.
     - <b>resnet</b> - Parameters used for training and validation for model with Resnet50 backbone architecture.
         -	<b>batch_size</b> - Batch size used by dataloader.
         -	<b>image_size</b> – Image size used in preprocessing/augmentation stage.
         -	<b>return_layers</b> – Dictionary defining which items of backbone dictionary are returned as feature maps to Retina network. There are 3 feature maps.
-        -	<b>in_channel</b>: Input channel number of backbone.
-        -	<b>out_channel</b>: Output channel number of backbone.
+        -	<b>in_channel</b> - Input channel number of backbone.
+        -	<b>out_channel</b> - Output channel number of backbone.
     - <b>head</b> – Parameters defining shape of anchors used for detection, thresholds for NMS and inference procedure.  
         -	<b>steps</b> - spacing/stride (in pixels) of anchors for corresponding feature maps used for anchors generation
         -	<b>aspects</b> – list of anchor aspect ratios used for anchors generation, it is shared for all feature maps  
