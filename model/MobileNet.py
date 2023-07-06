@@ -2,14 +2,11 @@ import torch.nn as nn
 from model.utils import conv_bn, conv_dw
 
 class MobileNetV1(nn.Module):
-    def __init__(self, pretrained):
-        
-        if pretrained: self.input_channels = 3
-        else: self.input_channels = 1
+    def __init__(self):
 
         super(MobileNetV1, self).__init__()
         self.stage1 = nn.Sequential(
-            conv_bn(self.input_channels, 8, 2, leaky = 0.1),    # 3
+            conv_bn(3, 8, 2, leaky = 0.1),    # 3
             conv_dw(8, 16, 1),   # 7
             conv_dw(16, 32, 2),  # 11
             conv_dw(32, 32, 1),  # 19

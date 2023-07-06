@@ -2,7 +2,6 @@ import cv2
 import numpy as np
 import random
 from augment.ops import matrix_iof 
-from matplotlib import pyplot as plt
 
 class Augmentation():
 

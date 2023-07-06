@@ -46,7 +46,6 @@ class ObjectDetection(BasePipeline):
             dict(epoch=epoch,
                  model_state_dict=self.model.state_dict(),
                  optimizer_state_dict=self.optimizer.state_dict()),
-                #scheduler_state_dict=self.scheduler.state_dict()),
                  path)
 
         log.info(f'Epoch {epoch:3d}: save ckpt to {path:s}')
@@ -139,21 +138,6 @@ class ObjectDetection(BasePipeline):
 
         return box_dicts
 
-    def adjust_learning_rate(self, optimizer, gamma, epoch, step_index, iteration, epoch_size):
-
-        """Sets the learning rate
-        # Adapted from PyTorch Imagenet example:
-        # https://github.com/pytorch/examples/blob/master/imagenet/main.py
-        """
-        warmup_epoch = -1
-        if epoch <= warmup_epoch:
-            lr = 1e-6 + (self.cfg.optimizer.lr-1e-6) * iteration / (epoch_size * warmup_epoch)
-        else:
-            lr = self.cfg.optimizer.lr * (self.cfg.optimizer.gamma ** (step_index))
-        for param_group in optimizer.param_groups:
-            param_group['lr'] = lr
-        return lr
-
 
     def run_inference(self, data):
         """Run inference on given data.
@@ -164,11 +148,6 @@ class ObjectDetection(BasePipeline):
         """
 
         self.load_ckpt()
-        #i = 0
-        #for  name, param in self.model.named_parameters():
-        #    if i < 1:
-        #        print(name, param)
-        #    i += 1
         self.model.eval()
 
         # If run_inference is called on raw data.
@@ -180,6 +159,10 @@ class ObjectDetection(BasePipeline):
             }])
 
         data.to(self.device)
+        # If Pipeline should process batches of various image size, priors feature maps needs to adapt according
+        # to this size. Head image_size parameter is updated with every batch, so detection head is able
+        # to adapt for various image size. This update is performed here within a pipeline, when image batch is
+        # formed for forward pass.
         self.model.image_size = data.images.shape[-2:]
 
         with torch.no_grad():
@@ -195,12 +178,10 @@ class ObjectDetection(BasePipeline):
         
         test_split = TorchDataloader(dataset=test_dataset,
                                      preprocess=self.model.preprocess,
-                                     transform=self.model.transform,
-                                     use_cache=False,
-                                     shuffle=False)
+                                     transform=self.model.transform
+                                    )
 
         idx = random.sample(range(0, len(test_dataset)), 1)
-        #idx = [160]
         data_item = test_split.__getitem__(idx[0])
         print(idx[0])
         print(data_item['attr'])
@@ -218,7 +199,7 @@ class ObjectDetection(BasePipeline):
   
         prediction = [self.transform_for_metric(item) for item in predicted_items]
 
-        # mAP metric evaluation for epoch over all validation data
+        # metrics evaluation for epoch over all validation data
         precision, recall, cmae, rmae, dmae = self.ME.evaluate(prediction,
                                              target,
                                              self.model.classes_ids,
@@ -328,9 +309,8 @@ class ObjectDetection(BasePipeline):
 
         test_split = TorchDataloader(dataset=self.dataset.get_split('testing'),
                                      preprocess=self.model.preprocess,
-                                     transform=self.model.transform,
-                                     use_cache=False,
-                                     shuffle=False)
+                                     transform=self.model.transform
+                                    )
 
         testing_loader = DataLoader(
             test_split,
@@ -352,6 +332,10 @@ class ObjectDetection(BasePipeline):
             for data in tqdm(testing_loader, desc='testing'):
             
                 data.to(self.device)
+                # If Pipeline should process batches of various image size, priors feature maps needs to adapt according
+                # to this size. Head image_size parameter is updated with every batch, so detection head is able
+                # to adapt for various image size. This update is performed here within a pipeline, when image batch is
+                # formed for forward pass.
                 self.model.image_size = data.images.shape[-2:]
 
                 results = self.model(data)
@@ -442,11 +426,8 @@ class ObjectDetection(BasePipeline):
 
         valid_split = TorchDataloader(dataset=valid_dataset,
                                       preprocess=self.model.preprocess,
-                                      transform=self.model.transform,
-                                      use_cache=self.dataset.cfg.use_cache,
-                                      shuffle=False,
-                                      steps_per_epoch=self.dataset.cfg.get(
-                                          'steps_per_epoch_valid', None))
+                                      transform=self.model.transform
+                                     )
 
         validation_loader = DataLoader(
             valid_split,
@@ -573,18 +554,11 @@ class ObjectDetection(BasePipeline):
         train_split = TorchDataloader(dataset=train_dataset,
                                       preprocess=self.model.preprocess,
                                       transform=self.model.transform,
-                                      use_cache=self.dataset.cfg.use_cache,
-                                      steps_per_epoch=self.dataset.cfg.get(
-                                          'steps_per_epoch_train', None))
+                                     )
 
         self.optimizer, self.scheduler = self.model.get_optimizer(self.cfg.optimizer)
 
         start_ep, _ = self.load_ckpt()
-
-        epoch_size = math.ceil(len(train_dataset) / self.cfg.batch_size)
-        stepvalues = (self.cfg.decay1 * epoch_size, self.cfg.decay2 * epoch_size)
-        step_index = 0
-        iteration = 0
 
         if os.path.exists(self.cfg.log_dir + '/training_record.csv'):
             training_record = pd.read_csv(self.cfg.log_dir + '/training_record.csv', index_col=False)
@@ -612,29 +586,12 @@ class ObjectDetection(BasePipeline):
                 torch.utils.data.get_worker_info().seed))
                                     )
             
-            #if iteration in stepvalues:
-            #    step_index += 1
 
             process_bar = tqdm(train_loader, desc='training')
 
             for data in process_bar:
-
-                iteration += 1
-                if iteration in stepvalues:
-                    step_index += 1
-
-                #lr = adjust_learning_rate(self.optimizer, self.cfg.optimizer.gamma, epoch,
-                #                          step_index, iteration, epoch_size)
-
     
                 data.to(self.device)
-
-                # If Pipeline should process batches of various image size, priors feature maps needs to adapt according
-                # to this size. Head image_size parameter is updated with every batch, so detection head is able
-                # to adapt for various image size. This update is performed here within a pipeline, when image batch is
-                # formed for forward pass.
-
-                #self.model.head.image_size = data.images.shape[-2:]
 
                 results = self.model(data)
 
@@ -647,12 +604,7 @@ class ObjectDetection(BasePipeline):
                                ]) 
  
                 self.optimizer.zero_grad()
-                loss_sum.backward()
-                
-                #if self.cfg.get('grad_clip_norm', -1) > 0:
-                #    torch.nn.utils.clip_grad_value_(self.model.parameters(),
-                #                                    self.cfg.grad_clip_norm)
-                
+                loss_sum.backward()        
                 self.optimizer.step()
 
                 desc = "training - "
@@ -666,16 +618,13 @@ class ObjectDetection(BasePipeline):
                 process_bar.set_description(desc)
                 process_bar.refresh()
 
-        #    # Scheduler is defined in model.get_oprimizer -> by default there is None value right now for scheduler
-        #    if self.scheduler is not None:
-        #        self.scheduler.step()
 
             if os.path.exists(self.cfg.log_dir + '/metrics.npy'):
                 metrics = np.load(self.cfg.log_dir + '/metrics.npy')
                 best_f1 = metrics[2]
             else:
                 best_f1 = 0
-            # --------------------- validation of epoch -> given by self.run_valid()
+
             if (epoch % self.cfg.get("validation_freq", 1)) == 0:
 
                 metrics = self.run_validation()

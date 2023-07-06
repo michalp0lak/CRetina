@@ -39,13 +39,13 @@ class ImageAugmentor():
         #random_pixel_noise = self.rng.uniform(0,1,size=image.shape) > 0.999
         #image += np.multiply(free_pixel_mask, random_pixel_noise)*255
 
-        #if self.rng.binomial(n=1, p = self.border_prob):
-        #    
-        #    image = self.rng.uniform(0,1, size=image.shape) * (image>0)
-#
-        #if self.rng.binomial(n=1, p = self.blur_prob):
-#
-        #    ksize = self.rng.integers(self.blur_kernel_size[0], self.blur_kernel_size[1], size=1, endpoint = True)[0]
-        #    image = cv2.blur(image, (ksize,ksize), cv2.BORDER_DEFAULT) 
+        if self.rng.binomial(n=1, p = self.border_prob):
+            
+            image = self.rng.uniform(self.border_intensity,1, size=image.shape) * (image>0)
+
+        if self.rng.binomial(n=1, p = self.blur_prob):
+
+            ksize = self.rng.integers(self.blur_kernel_size[0], self.blur_kernel_size[1], size=1, endpoint = True)[0]
+            image = cv2.blur(image, (ksize,ksize), cv2.BORDER_DEFAULT) 
 
         return image

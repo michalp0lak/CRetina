@@ -1,12 +1,9 @@
 import torch
 import torch.nn as nn
-import torchvision.models.detection.backbone_utils as backbone_utils
 import torchvision.models._utils as _utils
 import torch.nn.functional as F
-import numpy as np
-from collections import OrderedDict
-import time
-from model.MobileNet import MobileNetV1 as MobileNetV1
+
+from model.MobileNet import MobileNetV1
 from model.utils import conv_bn, conv_bn_no_relu, conv_bn1X1
 from model.base_model import BaseModel
 from model.utils import BoxCoder, CenterCoder, DirectionCoder, Prior2DBoxGenerator

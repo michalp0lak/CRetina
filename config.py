@@ -1,8 +1,6 @@
 import os
 from addict import Dict
 import yaml
-import json
-import numpy as np
 
 class ConfigDict(Dict):
 
@@ -73,24 +71,11 @@ class Config(object):
         cfg.pipeline.device = cfg.global_args.device
         cfg.pipeline.log_dir = cfg.global_args.output_path
         cfg.pipeline.model_name = cfg.model.model_name
-        cfg.pipeline.dataset_name = cfg.dataset.dataset_name
 
         cfg.model.augment['image_size'] = cfg.model[cfg.model['backbone']]['image_size']
         cfg.model.head['image_size'] = cfg.model[cfg.model['backbone']]['image_size']
         cfg.pipeline['batch_size'] = cfg.model[cfg.model['backbone']]['batch_size']   
-        cfg.pipeline['decay1'] = cfg.model[cfg.model['backbone']]['decay1'] 
-        cfg.pipeline['decay2'] = cfg.model[cfg.model['backbone']]['decay2']
-        
-        #if (cfg.dataset is None) | (cfg.dataset.__getattr__('dataset_path') is None):
-        #    raise ValueError('Dataset configuration is empty! Or it does not contain dataset_path attribute.')
-        #if cfg.pipeline is None:
-        #    raise ValueError('Pipeline configuration is empty! It has to at least contain model_path attribute.')
-        #elif cfg.model is None:
-        #    raise ValueError('Model configuration is empty! It has to contain model parameters.')
-
-        ################################################################################
-        # Add extra command line arguments
- 
+         
         return cfg.dataset, cfg.pipeline, cfg.model
 
     @staticmethod
@@ -107,7 +92,6 @@ class Config(object):
 
         else: 
             with open(filename) as f: cfg_dict = yaml.safe_load(f)
-            #with open(filename,"r") as f: cfg_dict = json.loads(f.read())
 
         return Config(cfg_dict)
 

@@ -1,24 +1,19 @@
 global_args:
-  framework: 'torch'
   device: 'cuda'
   seed: 0
   output_path: /home/michal/Desktop/Data/OvalDetector/
 
 dataset:
   dataset_path: /home/michal/Desktop/Data/C_detection/2023-03-22_11-47-02/
-  dataset_name: 'SimulatedOvals'
-  use_cache: False
   
 model:
   model_name: 'RetinaC'
   backbone: 'mobilenet'
-  pretrained: False
+  pretrained: True
   classes: ['C']
 
   mobilenet:
     batch_size: 12
-    decay1: 190
-    decay2: 220
     image_size: 640
     return_layers: {'stage1': 1, 'stage2': 2, 'stage3': 3}
     in_channel: 32
@@ -26,8 +21,6 @@ model:
 
   resnet:
     batch_size: 1
-    decay1: 70
-    decay2: 90
     image_size: 840
     return_layers: {'layer2': 1, 'layer3': 2, 'layer4': 3}
     in_channel: 256
@@ -38,7 +31,6 @@ model:
     steps: [8, 16, 32]
     aspects: [0.25, 0.5, 1]
     sizes: [[8, 12], [16,24], [32, 48]]
-    #sizes: [[8, 16], [32, 64], [128, 256]]
     variances: [0.1, 0.2]
     # Negative sampling ratio
     negpos_ratio: 7
@@ -60,11 +52,8 @@ pipeline:
   max_epoch: 100
   validation_freq: 5
   save_ckpt_freq: 5
-  ngpu: 1
-  gpu_train: True
   num_workers: 6
   overlaps: [0.5]
-  gamma: 0.1
 
   loss:
     cls_weight: 1.0

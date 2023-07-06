@@ -1,5 +1,3 @@
-import sys
-sys.path.append('/home/michal/Desktop/Dev/Retinaface/')
 import logging
 from dataset.ImageDataset import Dataset
 from model.RetNet import RetinaShape
@@ -22,6 +20,8 @@ def main():
 
     if cfg_dict_pipeline.get('inference_mode'):
         pipeline.run_testing()
+    else:
+        raise ValueError("Can't run testing session with configuration of inference_mode: False")
 
 if __name__ == '__main__':
 
