@@ -1,6 +1,6 @@
 import logging
 from dataset.ImageDataset import Dataset
-from model.RetNet import RetinaShape
+from model.RetinaNet import RetinaDetector
 from pipeline.pipeline import ObjectDetection
 from config import Config
 
@@ -15,7 +15,7 @@ def main():
     cfg_dict_dataset, cfg_dict_pipeline, cfg_dict_model = Config.initialize_cfg_file(cfg)
 
     dataset = Dataset(**cfg_dict_dataset)
-    model = RetinaShape(**cfg_dict_model)
+    model = RetinaDetector(**cfg_dict_model)
     pipeline = ObjectDetection(model, dataset, global_cfg, **cfg_dict_pipeline)
 
     if cfg_dict_pipeline.get('inference_mode'):

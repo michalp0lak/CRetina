@@ -46,7 +46,7 @@ model:
 
 pipeline:
   name: ObjectDetection
-  inference_mode: False
+  inference_mode: True
   is_resume: False
   resume_from: 2023-03-27-12-00-06
   max_epoch: 100

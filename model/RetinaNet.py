@@ -359,7 +359,7 @@ class Head(nn.Module):
 
         return scores, labels, boxes, centers, radius, dirs
 
-class RetinaShape(BaseModel):
+class RetinaDetector(BaseModel):
     
     def __init__(self,
                  device="cuda",
@@ -373,7 +373,7 @@ class RetinaShape(BaseModel):
         :param cfg:  Network related settings.
         :param phase: train or test.
         """
-        super(RetinaShape,self).__init__(device=device, **kwargs)
+        super(RetinaDetector,self).__init__(device=device, **kwargs)
         self.device = device
         self.backbone = backbone
         self.pretrained = pretrained
@@ -399,8 +399,8 @@ class RetinaShape(BaseModel):
         # Initialize required backbone - MobileNet vs ResNet50
         # MobileNet
         if self.backbone == 'mobilenet':
-            backbone_model = MobileNetV1(self.pretrained)
-            if pretrained:
+            backbone_model = MobileNetV1()
+            if self.pretrained:
                 checkpoint = torch.load("./weights/mobilenet.tar", map_location=self.device)
                 from collections import OrderedDict
                 new_state_dict = OrderedDict()
