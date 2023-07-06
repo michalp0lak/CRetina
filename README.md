@@ -35,6 +35,50 @@ conda activate "env_name"
 pip3 install -r requirements.txt
 ```
 
+<h2>Annotated dataset simulation</h2>
+Simulated dataset was used to train c-shapes detection model. Dataset simulator generating binary images with specific geometrical shapes was developed for this purpose. Target (C-shapes) objects in the images are partially occluded circles and other objects (lines, clusters of noise pixels) are added as a noise.
+
+Data simulation module can be found in **DataSimulator** folder.
+
+<h3>Structure of module</h3>
+
+-   <b>augmentation.py</b> – Generates in the image noisy pixels and noisy geometrical shapes.
+-	<b>bresenham.py</b> – Algorithm for line generation in the image.
+-	<b>ops.py</b> – Collection of functions used in data simulation process.
+-	<b>shapes.py</b> – Classes defining geometrical shapes, which are created in simulation.
+-   <b>simulator.py</b> - Script which starts simulation process and generates simulated dataset with given configuration.
+
+<h3>Configuration file for data simulation process <b>config_sim.yaml</b></h3>
+
+-   general – General simulation parameters.
+    -   output_path - Directory where folder with simulated dataset should be created.
+    -   sample_size - Number of generated images (dataset size).
+    -   sample_split -  Defines proportion of dataset split in order training/validation/testing.
+    -   pixel_limit - Range (in pixels) used for random selection, defining bigger image dimension.
+    -   img_aspect_ratio - Range (in pixels) used for random selection, defining image aspect ratio.
+-	oval_simulator – Parameters defining simulated target (C-shapes) attributes.
+    -   radius_limit - Range (in pixels) used for random selection, defining target radius.
+    -   ellipse_aspect_ratio - Range used for random selection, defining ellipse aspect ratio.
+    -   circle_prob – Probability of Circle-Ellipse target simulation (binary selection).
+    -   line_thickness - Range (in pixels) used for random selection, defining thickness of line of simulated target, which is drawn in image by cv2ellipse() function.
+    -   occlusion – Parameters of simulated target occlusion.
+        -   prob - Probability of occlusion.
+        -   range - Range used for random selection, defining how big part of target is occluded.
+-	augmentation – Parameters used for noise generation in simulated image.
+    -	border_distortion – Augmentation decreasing intensity value of pixels of simulated geometrical shapes.
+        -   prob – Probability of application of this augmentation technique.
+        -   intensity_range - Range used for random selection, defining minimal intensity decrement level.
+    -   blur – Parameters used for image blurring.
+        -   prob -  Probability of application of blurring augmentation.
+        -   kernel_size - Range (in pixels) used for random selection, defining blurring kernel size.
+    -   noise – Parameters used for simulation of noisy geometrical objects.
+        -   type_prob – Probability of (linear, cluster) geometrical shape.
+        -   linear – Parameters used for linear geometrical object simulation.
+            -   line_range - Range (in pixels) used for random selection, defining linear geometrical object length.
+            -   corner_prob – Probability if simulated linear object will be in the shape of corner (two connected lines) or simple line.
+        -   cluster - Parameters used for random circular noise pixel cluster simulation.
+            -   rad_range - Range (in pixels) used for random selection, defining radius of circular noise pixel cluster.
+
 <h2>Execution of framework sessions</h2>
 
 ```
@@ -56,13 +100,12 @@ python show_inference.py
 python run_testing.py
 ```
 
-<h2>Project structure</h2>
+<h2>Framework structure</h2>
 
 -	<b>dataset</b> – contains modules for data preprocessing and importing data to Pytorch framework for training/validation/testing session
     -	<b>base_dataset.py</b> - Base dataset class, all datasets must inherit from this class to be compatible with pipeline. 
     -	<b>ImageDataset.py</b> - Imports data for given data split (training/validation/testing) and defines how single sample (image+annotation) should be imported.
     -	<b>dataloaders.py</b> – Custom dataloader which forms images and annotations into batches as an input for model.
-    -	<b>dataset_transformers.py</b> – Collection of transformers for public datasets mentioned above, to unified their format and merge them into one dataset.
 -	<b>augment</b> – module is responsible for augmentation applied on single image during training process.
     -	<b>augmentation.py</b> – Class implementing set of custom image augmentation techniques, which (are/can be) applied during training process.
     -	<b>ops.py</b> -  Collection of operations used for image augmentation.
