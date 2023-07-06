@@ -1,12 +1,12 @@
 general:
-  output_path: '/home/michal/Desktop/Data/OvalSimulatedData/'
+  output_path: '/home/michal/Desktop/Data/C_detection/'
   sample_size: 2000
   sample_split: [0.65, 0.2, 0.15]
   pixel_limit: [500, 1500]
   img_aspect_ratio: [0.5,1]
 
 oval_simulator:
-  radius_limit: [10,50]
+  radius_limit: [5,15]
   ellipse_aspect_ratio: [0.85,1] 
   circle_prob: 1
   line_thickness: [1,1]

@@ -1,9 +1,7 @@
 import numpy as np
-import glob, re, os
+import glob, os
 from pathlib import Path
-from os.path import join, exists, dirname, abspath, isfile
 import logging
-import random
 import cv2
 import json
 
@@ -37,45 +35,40 @@ class ImageSplit(BaseDatasetSplit):
     def __len__(self):
         return len(self.path_list)
 
-    def read_numpy(self,path):
-        """Reads lidar data from the path provided.
-        Returns:
-            A data object with lidar information.
-        """
-        assert Path(path).exists()
-        return np.load(path)
 
     def get_data(self, idx):
 
         image_path = self.path_list[idx]
         path_sp = image_path.split('/')
         anot_path = '/' + os.path.join(*path_sp[:-1]) + '/annot_' + path_sp[-1].split('.')[0] + '.json'
-        img = cv2.imread(image_path)
+        img = np.expand_dims(cv2.imread(image_path)[:,:,0],-1)
 
         with open(anot_path, 'r') as j:
             anot = json.loads(j.read())
 
         labels = []
         boxes = []
-        center = []
+        centers = []
         radius = []
-        direction = []
+        directions = []
 
         for oval in anot:
             if (oval['class'] == 0) or (oval['class'] == 1): 
                 labels.append(1)
                 boxes.append(oval['label_bbox'])
-                center.append(oval['center'])
+                centers.append(oval['center'])
                 radius.append(oval['axes'][0])
-                direction.append(np.deg2rad(oval['orientation']))
+                direction = (oval['orientation']+oval['angle'])%360
+                direction = 2*np.pi - np.deg2rad(direction)
+                directions.append(direction)
 
         labels = np.asarray(labels)
         boxes = np.asarray(boxes).astype(np.float32)
-        center = np.asarray(center).astype(np.float32)
+        centers = np.asarray(centers).astype(np.float32)
         radius = np.asarray(radius).astype(np.float32)
-        direction = np.asarray(direction).astype(np.float32)/(2*np.pi)
+        directions = np.asarray(directions).astype(np.float32)
 
-        return {'image': img, 'labels': labels, 'boxes': boxes, 'centers': center, 'radius': radius, 'directions': direction}
+        return {'image': img, 'labels': labels, 'boxes': boxes, 'centers': centers, 'radius': radius, 'directions': directions}
 
     def get_attr(self, idx):
 

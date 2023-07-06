@@ -75,7 +75,7 @@ class MetricEvaluator():
         target, target_idx = self.filter_data(target, classes)
 
         # For given batch IoU matrix between predictions and targets is evaluated
-        detection = torch.zeros((len(classes), len(pred['box']), 3)).to(self.device)
+        detection = torch.zeros((len(classes), len(pred['box']), 6)).to(self.device)
         fns = torch.zeros((len(classes), 1), dtype=torch.int64).to(self.device)
         
         if pred['box'].shape[0] == 0:
@@ -84,7 +84,6 @@ class MetricEvaluator():
             return detection, fns
 
         overlap = jaccard(pred['box'], target['box'])
-        #print(overlap)
         # Output matrices:
             # detection stores for each class - all predicted bboxes with score, true positive indicator, false negative indicator
             # fns stores for each class count of false negatives based on min_overlap
@@ -104,7 +103,7 @@ class MetricEvaluator():
             if len(overlap_label.shape) == 1: overlap_label = overlap_label.unsqueeze(-1)
             # if there are some predictions for given class
             if len(pred_idx_l) > 0:
-                
+
                 # no matching gt box (filtered preds vs all targets)
                 false_positive = (overlap_label < min_overlap[i]).all(axis=1)
         
@@ -123,27 +122,44 @@ class MetricEvaluator():
                     max_idx = torch.argmax(overlap_label, axis=0)
 
                     # Vector indicating predicted boxes which are best matches with target boxes
-                    max_cond = torch.Tensor([True if idx in max_idx else False for idx in range(0,overlap_label.shape[0])]).to(self.device)
+                    max_cond = torch.tensor([True if idx in max_idx else False for idx in 
+                                             range(0,overlap_label.shape[0])], dtype=torch.bool).to(self.device)
                 else:
                     max_cond = torch.zeros(len(pred_idx_l)).to(self.device)
 
                 # Potential true positives indexes && best matches indexes => true positives  
                 global_cond = torch.logical_and(max_cond, match_cond)
-                
+
+                # For each predicted item, index of best matching target
+                target_idx = torch.argmax(overlap_label, axis=1)
+
+                # Evaluate L1 norm error for all predicted items (for regressed parameters - center, radius, direction)
+                center_L1 = 0.5*torch.sum(torch.abs(pred['center']-target['center'][target_idx]), dim=1)
+                radius_L1 = torch.abs(pred['radius']-target['radius'][target_idx])
+                direction_L1 = torch.abs(pred['direction']-target['direction'][target_idx])
+
+                # Remove false positive errors -> misclasified items should not contribute for regressed params error
+                # We want error just for true positives (best matches), flase positives will be assigned with 0 value
+
+                center_L1[torch.logical_not(global_cond)] = 0 
+                radius_L1[torch.logical_not(global_cond)] = 0
+                direction_L1[torch.logical_not(global_cond)] = 0
+
                 true_positive[global_cond] = 1
                 false_positive[global_cond] = 0
 
                 # False negatives - ground truth boxes which were not detected
                 fns[i] = torch.sum(torch.all(overlap_label < min_overlap[i],axis=0))
 
-                detection[i, pred_idx_l] = torch.stack([pred_label['score'], 
-                                                        true_positive, false_positive], axis=-1)     
+                detection[i, pred_idx_l,:] = torch.stack([pred_label['score'], 
+                                                        true_positive, false_positive,
+                                                        center_L1, radius_L1, direction_L1], 
+                                                        axis=-1)     
             else:
 
                 fns[i] = len(target_idx_l)
 
         return detection, fns
-
 
     def evaluate(self,
                  pred,
@@ -168,12 +184,11 @@ class MetricEvaluator():
                 }[]
             [torch.Tensor(data['label'] == label) for label in labels]
         """
-
         if len(min_overlap) != len(classes):
             assert len(min_overlap) == 1
             min_overlap = min_overlap * len(classes)
         assert len(min_overlap) == len(classes)
-
+        
         cnt = 0
         box_cnts = [0]
 
@@ -188,9 +203,9 @@ class MetricEvaluator():
                 for t in target:
                     gt_cnt[i] += len(self.filter_data(t, [c])[1])
 
-        detection = torch.zeros((len(classes),  box_cnts[-1], 3)).to(self.device)
+        detection = torch.zeros((len(classes),  box_cnts[-1], 6)).to(self.device)
         fns = torch.zeros((len(classes), 1), dtype=torch.int64).to(self.device)
-
+        
         # For each item in batch
         for i in range(len(pred)):
 
@@ -203,17 +218,37 @@ class MetricEvaluator():
             detection[:, box_cnts[i]:box_cnts[i + 1]] = d
             fns += f
 
+
         # Matrix to store precision and recall for each class
         recall = torch.zeros((len(classes), 1)).to(self.device)
         precision = torch.zeros((len(classes), 1)).to(self.device)
+        center_mae = torch.zeros((len(classes), 1)).to(self.device)
+        radius_mae = torch.zeros((len(classes), 1)).to(self.device)
+        direction_mae = torch.zeros((len(classes), 1)).to(self.device)
 
         # for every class
         for i in range(len(classes)):
 
+            valid_items = detection[i,:,1] == 1
             # Recall
             recall[i] = 100 * (detection[i,:,1].sum()/(detection[i,:,1].sum()+fns[i]))
 
             # Precision
             precision[i] = 100 * (detection[i,:,1].sum()/(detection[i,:,1].sum()+detection[i,:,2].sum()))
 
-        return precision.cpu().detach().numpy(), recall.cpu().detach().numpy()
+            #Center MSE
+            center_mae[i] = torch.mean(detection[i,valid_items,3])
+
+            #Radius MSE
+            radius_mae[i] = torch.mean(detection[i,valid_items,4])
+
+            #Direction MSE
+            direction_mae[i] = torch.mean(detection[i,valid_items,5])
+
+            recall = recall.cpu().detach().numpy()
+            precision = precision.cpu().detach().numpy()
+            center_mae = center_mae.cpu().detach().numpy()
+            radius_mae = radius_mae.cpu().detach().numpy()
+            direction_mae = direction_mae.cpu().detach().numpy()
+
+        return precision, recall, center_mae, radius_mae, direction_mae, 

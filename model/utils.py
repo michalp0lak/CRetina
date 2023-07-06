@@ -38,7 +38,6 @@ def conv_dw(inp, oup, stride, leaky=0.1):
         nn.LeakyReLU(negative_slope= leaky,inplace=True),
     )
 
-# Priors generator
 class Prior2DBoxGenerator(object):
 
     def __init__(self,
@@ -51,44 +50,107 @@ class Prior2DBoxGenerator(object):
         super(Prior2DBoxGenerator, self).__init__()
         self.steps = steps
         self.aspects = aspects
-        self.min_sizes = sizes
+        self.sizes = sizes
         self.image_size = image_size
         self.clip = clip
         self.feature_maps = [[ceil(self.image_size[0]/step), ceil(self.image_size[1]/step)] for step in self.steps]
 
-    def forward(self, device):
-        anchors = []
+    def forward_v1(self, device):
 
-        for k, f in enumerate(self.feature_maps):
-            min_sizes = self.min_sizes[k]
-            for i, j in product(range(f[0]), range(f[1])):
-                for l, a_ratio in enumerate(self.aspects):
-                    for min_size in min_sizes:
+        priors = []
 
-                        if a_ratio == 1:
-                            s_kx = min_size / self.image_size[1]
-                            s_ky = min_size / self.image_size[0]
+        for k, feature_map in enumerate(self.feature_maps):
 
-                            dense_cx = [x * self.steps[k] / self.image_size[1] for x in [j + 0.5]]
-                            dense_cy = [y * self.steps[k] / self.image_size[0] for y in [i + 0.5]]
+            fmap_sizes = self.sizes[k]
+
+            x = torch.arange(0.5, feature_map[1]+0.5,1, device=device)*(self.steps[k]/self.image_size[1])
+            y = torch.arange(0.5, feature_map[0]+0.5,1, device=device)*(self.steps[k]/self.image_size[0])
+
+            grid = torch.meshgrid(y, x, indexing='ij')
+            prior_centers = torch.cat([grid[1].reshape(-1,1), grid[0].reshape(-1,1)], dim=-1)
             
-                            for cy, cx in product(dense_cy, dense_cx):
-                                anchors += [cx, cy, s_kx, s_ky]
-                        else:
-                            s_kx = min_size / self.image_size[1]
-                            s_ky = min_size / self.image_size[0]
+            prior_dims = []
 
-                            dense_cx = [x * self.steps[k] / self.image_size[1] for x in [j + 0.5]]
-                            dense_cy = [y * self.steps[k] / self.image_size[0] for y in [i + 0.5]]
-            
-                            for cy, cx in product(dense_cy, dense_cx):
-                                anchors += [cx, cy, s_kx*a_ratio, s_ky]
-                                anchors += [cx, cy, s_kx, s_ky*a_ratio]
+            for ratio in self.aspects:
+                for size in fmap_sizes:
 
-        output = torch.tensor(anchors, device=device).view(-1, 4)
+
+                    if ratio == 1:
+                        
+                        prior_dims_e = torch.tensor([size / self.image_size[1], size / self.image_size[0]], 
+                            device=device).unsqueeze(0)
+                        prior_dims.append(prior_dims_e)
+
+                    else:
+                        prior_dims_v = torch.tensor([ratio*size / self.image_size[1], size / self.image_size[0]], 
+                            device=device).unsqueeze(0)
+                        prior_dims.append(prior_dims_v)
+
+                        prior_dims_h = torch.tensor([size / self.image_size[1], ratio*size / self.image_size[0]], 
+                            device=device).unsqueeze(0)
+                        prior_dims.append(prior_dims_h)
+                
+
+            prior_dims = torch.cat(prior_dims, dim=0)
+            prior_num = prior_dims.size(0)
+            prior_dims = prior_dims.repeat(prior_centers.size(0), 1)
+            prior_centers = torch.repeat_interleave(prior_centers, prior_num, dim=0)
+            priors_fmap = torch.cat([prior_centers,prior_dims], dim=-1)
+            priors.append(priors_fmap)
+        
+        priors = torch.cat(priors)
+
         if self.clip:
-            output.clamp_(max=1, min=0)
-        return output
+            priors.clamp_(max=1, min=0)
+
+        return priors
+
+    def forward_v2(self, device):
+
+        priors = []
+
+        for k, feature_map in enumerate(self.feature_maps):
+
+            fmap_sizes = self.sizes[k]
+
+            x = torch.arange(0.5, feature_map[1]+0.5,1, device=device)*(self.steps[k]/self.image_size[1])
+            y = torch.arange(0.5, feature_map[0]+0.5,1, device=device)*(self.steps[k]/self.image_size[0])
+
+            grid = torch.meshgrid(x, y, indexing='ij')
+            prior_centers = torch.cat([grid[0].reshape(-1,1), grid[1].reshape(-1,1)], dim=-1)
+
+            fmap_priors = []
+
+            for size in fmap_sizes:
+
+                prior_dims = torch.tensor([size / self.image_size[1],size / self.image_size[0]], 
+                                          device=device).unsqueeze(0).repeat(prior_centers.size(0), 1)
+                
+                priors_single = torch.cat([prior_centers, prior_dims], dim=-1)
+
+                for ratio in self.aspects:
+
+                    if ratio == 1:
+
+                        fmap_priors.append(priors_single)
+
+                    else:
+                        priors_single_v= priors_single.clone()
+                        priors_single_v[:,2] *= ratio  
+                        fmap_priors.append(priors_single_v)
+                        priors_single_h= priors_single.clone()
+                        priors_single_h[:,3] *= ratio  
+                        fmap_priors.append(priors_single_h)
+
+            fmap_priors = torch.cat(fmap_priors, dim = 1)
+            priors.append(fmap_priors.view(-1,4))
+
+        priors = torch.cat(priors)
+
+        if self.clip:
+            priors.clamp_(max=1, min=0)
+
+        return priors
 
 
 def point_form(boxes):
@@ -179,17 +241,16 @@ def matrix_iof(a, b):
     area_a = np.prod(a[:, 2:] - a[:, :2], axis=1)
     return area_i / np.maximum(area_a[:, np.newaxis], 1)
 
-class BBoxCoder(object):
-    """Bbox Coder for 3D boxes.
-    Args:
-        code_size (int): The dimension of boxes to be encoded.
+class BoxCoder(object):
+    """
+        Bbox Coder for 2D boxes.
     """
 
     def __init__(self, variances):
-        super(BBoxCoder, self).__init__()
+        super(BoxCoder, self).__init__()
         self.variances = variances
 
-    def encode(self, targets, priors):
+    def encode(self, target_boxes, priors):
         """Encode the variances from the priorbox layers into the ground truth boxes
         we have matched (based on jaccard overlap) with the prior boxes.
         Args:
@@ -203,17 +264,17 @@ class BBoxCoder(object):
         """
 
         # dist b/t match center and prior's center
-        center_diff = (targets[:, :2] + targets[:, 2:])/2 - priors[:, :2]
+        center_diff = (target_boxes[:, :2] + target_boxes[:, 2:])/2 - priors[:, :2]
         # encode variance
         center_diff /= (self.variances[0] * priors[:, 2:])
         # match wh / prior wh
-        dim_diff = (targets[:, 2:] - targets[:, :2]) / priors[:, 2:]
-        g_wh = torch.log(dim_diff) / self.variances[1]
+        dim_diff = (target_boxes[:, 2:] - target_boxes[:, :2]) / priors[:, 2:]
+        dim_diff = torch.log(dim_diff) / self.variances[1]
         # return target for smooth_l1_loss
         return torch.cat([center_diff, dim_diff], 1)  # [num_priors,4]
 
     # Adapted from https://github.com/Hakuyume/chainer-ssd
-    def decode(self, predictions, priors):
+    def decode(self, predicted_boxes, priors):
         """Decode locations from predictions using priors to undo
         the encoding we did for offset regression at train time.
         Args:
@@ -227,61 +288,158 @@ class BBoxCoder(object):
         """
 
         boxes = torch.cat((
-            priors[:, :2] + predictions[:, :2] * self.variances[0] * priors[:, 2:],
-            priors[:, 2:] * torch.exp(predictions[:, 2:] * self.variances[1])), 1)
+            priors[:, :2] +  predicted_boxes[:, :2] * self.variances[0] * priors[:, 2:],
+            priors[:, 2:] * torch.exp( predicted_boxes[:, 2:] * self.variances[1])), 1)
 
         boxes[:, :2] -= boxes[:, 2:] / 2
         boxes[:, 2:] += boxes[:, :2]
 
         return boxes
 
-
-def encode(matched, priors, variances):
-    """Encode the variances from the priorbox layers into the ground truth boxes
-    we have matched (based on jaccard overlap) with the prior boxes.
-    Args:
-        matched: (tensor) Coords of ground truth for each prior in point-form
-            Shape: [num_priors, 4].
-        priors: (tensor) Prior boxes in center-offset form
-            Shape: [num_priors,4].
-        variances: (list[float]) Variances of priorboxes
-    Return:
-        encoded boxes (tensor), Shape: [num_priors, 4]
+class CenterCoder(object):
+    """
+        Center Coder for 2D C-centers.
     """
 
-    # dist b/t match center and prior's center
-    g_cxcy = (matched[:, :2] + matched[:, 2:])/2 - priors[:, :2]
-    # encode variance
-    g_cxcy /= (variances[0] * priors[:, 2:])
-    # match wh / prior wh
-    g_wh = (matched[:, 2:] - matched[:, :2]) / priors[:, 2:]
-    g_wh = torch.log(g_wh) / variances[1]
-    # return target for smooth_l1_loss
-    return torch.cat([g_cxcy, g_wh], 1)  # [num_priors,4]
+    def __init__(self, variances):
+        super(CenterCoder, self).__init__()
+        self.variances = variances
 
-# Adapted from https://github.com/Hakuyume/chainer-ssd
-def decode(loc, priors, variances):
-    """Decode locations from predictions using priors to undo
-    the encoding we did for offset regression at train time.
-    Args:
-        loc (tensor): location predictions for loc layers,
-            Shape: [num_priors,4]
-        priors (tensor): Prior boxes in center-offset form.
-            Shape: [num_priors,4].
-        variances: (list[float]) Variances of priorboxes
-    Return:
-        decoded bounding box predictions
+    def encode(self, target_centers, priors):
+
+        """Encode the variances from the priorbox layers into the ground truth centers
+        we have matched (based on jaccard overlap) with the prior boxes.
+        Args:
+            target_centers: (tensor) Center coords of ground truth for each prior in point-form
+                Shape: [num_priors, 2].
+            priors: (tensor) Prior in center-offset form
+                Shape: [num_priors,4].
+            variances: (list[float]) Variances of priorboxes
+        Return:
+            encoded center points (tensor), Shape: [num_priors, 4]
+        """
+        # Get offset between prior center and assigned ground truth center point 
+        g_cxcy = target_centers[:,:2] - priors[:,:2]
+        # encode variance
+        g_cxcy /= (self.variances[0] * priors[:, 2:])
+        # return target for smooth_l1_loss
+        return g_cxcy
+
+    def decode(self, predicted_centers, priors):
+        """Decode center locations from predictions using priors to undo
+        the encoding we did for offset regression at train time.
+        Args:
+            predicted_centers (tensor): center offset-to-prior predictions
+                Shape: [num_priors,2]
+            priors (tensor): Prior boxes in center-offset form.
+                Shape: [num_priors,4].
+            variances: (list[float]) Variances of priorboxes
+        Return:
+            decoded center predictions
+        """
+        centers = predicted_centers * self.variances[0] * priors[:, 2:] + priors[:,:2]
+
+        return centers
+
+class RadiusCoder(object):
+    """
+        radius Coder for C-radius.
     """
 
-    boxes = torch.cat((
-        priors[:, :2] + loc[:, :2] * variances[0] * priors[:, 2:],
-        priors[:, 2:] * torch.exp(loc[:, 2:] * variances[1])), 1)
+    def __init__(self, variances):
+        super(RadiusCoder, self).__init__()
+        self.variances = variances
 
-    boxes[:, :2] -= boxes[:, 2:] / 2
-    boxes[:, 2:] += boxes[:, :2]
+    def encode(self, target_radius, priors):
 
-    return boxes
+        """Encode the variances from the priorbox layers into the ground truth radius
+        we have matched (based on jaccard overlap) with the prior boxes.
+        Args:
+            target_radius: (tensor) Center coords of ground truth for each prior in point-form
+                Shape: [num_priors, 1].
+            priors: (tensor) Prior in center-offset form
+                Shape: [num_priors,4].
+            variances: (list[float]) Variances of priorboxes
+        Return:
+            encoded radius (tensor), Shape: [num_priors, 1]
+        """
+        
+        # Get offset between prior bigger dim and assigned ground truth radius
+        radius_diff = torch.log(target_radius/torch.max(priors[:, 2:], dim=1, keepdim=True).values)
+        # encode variance
+        radius_diff /= self.variances[1]
 
+        # return target for smooth_l1_loss
+        return radius_diff
+
+    def decode(self, predicted_radius, priors):
+        """Decode center locations from predictions using priors to undo
+        the encoding we did for offset regression at train time.
+        Args:
+            predicted_centers (tensor): center offset-to-prior predictions
+                Shape: [num_priors,2]
+            priors (tensor): Prior boxes in center-offset form.
+                Shape: [num_priors,2].
+            variances: (list[float]) Variances of priorboxes
+        Return:
+            decoded center predictions
+        """
+
+        radius = torch.exp(predicted_radius * self.variances[1]) * torch.max(priors[:, 2:], dim=1, keepdim=True).values
+
+        return radius
+
+class DirectionCoder(object):
+    """
+        Direction Coder for C-direction.
+    """
+
+    def __init__(self, variances):
+        super(DirectionCoder, self).__init__()
+        self.variances = variances
+
+    def encode(self, target_directions, priors):
+
+        """Encode the variances from the priorbox layers into the ground truth direction
+        we have matched (based on jaccard overlap) with the prior boxes.
+        Args:
+            target_directions: (tensor) Center coords of ground truth for each prior in point-form
+                Shape: [num_priors, 1].
+            priors: (tensor) Prior in center-offset form
+                Shape: [num_priors,4].
+            variances: (list[float]) Variances of priorboxes
+        Return:
+            encoded radius (tensor), Shape: [num_priors, 1]
+        """
+
+        # Get offset between prior bigger dim and assigned ground truth radius
+        #radius_diff = torch.log(target_radius/torch.max(priors[:, 2:], dim=1, keepdim=True).values)
+        # encode variance
+        #radius_diff /= self.variances[1]
+
+        # return target for smooth_l1_loss
+        return target_directions
+
+
+    def decode(self, predicted_directions, priors):
+        """Decode center locations from predictions using priors to undo
+        the encoding we did for offset regression at train time.
+        Args:
+            predicted_centers (tensor): center offset-to-prior predictions
+                Shape: [num_priors,2]
+            priors (tensor): Prior boxes in center-offset form.
+                Shape: [num_priors,2].
+            variances: (list[float]) Variances of priorboxes
+        Return:
+            decoded center predictions
+        """
+        predicted_angle = torch.atan2(predicted_directions[:,0], predicted_directions[:,1])
+        
+        # atan2 returns angle in [-pi;pi] interval, so here angle is transformed to [0;2*pi] interval
+        predicted_angle[predicted_angle < 0] += 2*torch.pi
+
+        return predicted_angle
+        
 def log_sum_exp(x):
     """Utility function for computing log_sum_exp while determining
     This will be used to determine unaveraged confidence loss across

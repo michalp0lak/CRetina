@@ -3,6 +3,7 @@ from model.utils import conv_bn, conv_dw
 
 class MobileNetV1(nn.Module):
     def __init__(self):
+
         super(MobileNetV1, self).__init__()
         self.stage1 = nn.Sequential(
             conv_bn(3, 8, 2, leaky = 0.1),    # 3

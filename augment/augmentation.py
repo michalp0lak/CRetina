@@ -2,7 +2,6 @@ import cv2
 import numpy as np
 import random
 from augment.ops import matrix_iof 
-from matplotlib import pyplot as plt
 
 class Augmentation():
 
@@ -11,7 +10,6 @@ class Augmentation():
     def __init__(self, cfg, seed=None):
 
         self.img_dim = cfg['image_size']
-        self.rgb_means = cfg['rgb_means']
 
     def crop(self, image, boxes, labels, img_dim):
 
@@ -178,7 +176,7 @@ class Augmentation():
 
         return expand_image, boxes_t
 
-    def mirror(self, image, boxes):
+    def mirror(self, image, boxes, centers, directions):
 
         _, width, _ = image.shape
         
@@ -187,32 +185,32 @@ class Augmentation():
             image = image[:, ::-1]
             boxes = boxes.copy()
             boxes[:, 0::2] = width - boxes[:, 2::-2]
+            centers[:,0] = width - centers[:,0] 
+            directions = (directions+np.pi)%(2*np.pi)
 
-        return image, boxes
+        return image, boxes, centers, directions
 
-    def pad_to_square(self, image, rgb_mean, pad_image_flag):
+    def pad_to_square(self, image, pad_image_flag):
 
         if not pad_image_flag:
             return image
 
-        height, width, _ = image.shape
+        height, width, depth = image.shape
         long_side = max(width, height)
-        image_t = np.empty((long_side, long_side, 3), dtype=image.dtype)
-        image_t[:, :] = rgb_mean
+        image_t = np.empty((long_side, long_side, depth), dtype=image.dtype)
+        image_t[:, :] = 0
         image_t[0:0 + height, 0:0 + width] = image
 
         return image_t
 
-    def resize_subtract_mean(self, image, insize, rgb_mean):
+    def resize(self, image, insize):
 
         interp_methods = [cv2.INTER_LINEAR, cv2.INTER_CUBIC, cv2.INTER_AREA, cv2.INTER_NEAREST, cv2.INTER_LANCZOS4]
-        #interp_method = interp_methods[random.randrange(5)]
-        interp_method = interp_methods[0]    
- 
+        interp_method = interp_methods[random.randrange(5)]
         image = cv2.resize(image, (insize, insize), interpolation=interp_method)
-        image = image.astype(np.float32)
-        #image = (image-rgb_mean)
-        image /= 255
+        
+        if len(image.shape) == 2:
+            image = np.expand_dims(image,-1)
 
         return image
 
@@ -220,37 +218,62 @@ class Augmentation():
 
         image = data['image'].copy()
         boxes = data['boxes'].copy()
+        centers = data['centers'].copy()
+        radius = data['radius'].copy()
+        directions = data['directions'].copy()
         labels = data['labels'].copy()
         
         assert boxes.shape[0] > 0, "this image does not contain any annotation"
 
         image_t = image.copy()
         boxes_t = boxes.copy()
+        centers_t = centers.copy()
+        radius_t = radius.copy()
+        directions_t = directions.copy()
         labels_t = labels.copy()
-        
+
         # Crop
         #if split in ['training']:
         #    image_t, boxes_t, labels_t, pad_image_flag = self.crop(image, boxes, labels, self.img_dim)
         #Distort
         #if split in ['training']:
         #    image_t = self.distort(image_t)
-        # Pad to square if not square
-        #if split in ['training', 'validation']:
-        #    image_t = self.pad_to_square(image_t, self.rgb_means, pad_image_flag=True)
+
+        # Pad to square if not square 
+        # (for batch processing we resize all images in batch to the same square size, so we don't have to change aspect ratio if it's padded)
+        if split in ['training', 'validation']:
+            image_t = self.pad_to_square(image_t, pad_image_flag=True)
+
         # Mirror
         #if split in ['training']:
-        #    image_t, boxes_t = self.mirror(image_t, boxes_t)
-        # Get dims for bboxes coords calculation
+        #    image_t, boxes_t, centers_t, directions_t = self.mirror(image_t, boxes_t, centers_t, directions_t)
+
+        # Get image dims before resizing for bboxes coords calculation
         height, width, _ = image_t.shape
+
         # Resize image to required shape and substract mean
         if split in ['training', 'validation']:
-            image_t = self.resize_subtract_mean(image_t, self.img_dim, self.rgb_means)
+            image_t = self.resize(image_t, self.img_dim)
 
-        # Get relative location of bboxes
+        # Cast image to float and normalize between [0,1]
+
+        #!!!!!! Hele normalizujes neco co nevracis pro trenink -> model pracuje s [0-255] a ne s [0-1]
+        image_t = image_t.astype(np.float32)/255
+
+        # Get relative location of C box
         boxes_t[:, 0::2] /= width
         boxes_t[:, 1::2] /= height
-        data['centers'][0] /= width
-        data['centers'][1] /= height
+        
+        # Get relative location of C center
+        centers_t[:,0] /= width
+        centers_t[:,1] /= height
+
+        #  Get relative size of C radius according to smaller dim of image
+        radius_t = np.expand_dims(radius_t, 1)/np.min([width, height])
+
+        directions_t = np.expand_dims(directions_t, 1)
+
         labels_t = np.expand_dims(labels_t, 1)
 
-        return {'image': image_t, 'labels':labels_t, 'boxes': boxes_t}
+        return {'image': image_t, 'labels':labels_t, 'boxes': boxes_t, 
+                'centers': centers_t, 'radius': radius_t, 'directions': directions_t}

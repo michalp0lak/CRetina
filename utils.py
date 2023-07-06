@@ -1,6 +1,5 @@
-from pathlib import Path
-from os.path import join, exists, dirname, abspath
-from os import makedirs, listdir
+from os.path import exists
+from os import makedirs
 
 
 def convert_device_name(framework):

@@ -1,7 +1,6 @@
 import os
 import cv2
 import numpy as np  
-import random
 import json
 import yaml
 from datetime import datetime
@@ -102,7 +101,7 @@ class Simulation():
             # Draw axes
             if oval['axes'][0] == oval['axes'][1]:
                 
-                endpoint = calculate_ellipse_pixel(oval['center'], oval['axes'], 0, oval['orientation']-90)[0]
+                endpoint = calculate_ellipse_pixel(oval['center'], oval['axes'], 0, oval['orientation'])[0]
                 
                 img_canvas = cv2.line(img_canvas, (oval['center'][0], oval['center'][1]), 
                                     (endpoint[0],endpoint[1]), 
@@ -170,7 +169,7 @@ class Simulation():
 
 if __name__== '__main__':
 
-    with open('./config.yml') as f: cfg = yaml.safe_load(f)
+    with open('./config_sim.yaml') as f: cfg = yaml.safe_load(f)
     simulator = Simulation(cfg)
     #image, oval_objects = simulator.get_sample()
     #simulator.visualize_sample(image, oval_objects)

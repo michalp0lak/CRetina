@@ -1,6 +1,3 @@
-import sys
-sys.path.append('/home/michal/Desktop/Dev/Retinaface/')
-import logging
 from dataset.ImageDataset import Dataset
 from model.RetNet import RetinaShape
 from pipeline.pipeline import ObjectDetection
@@ -17,9 +14,13 @@ def main():
     cfg_dict_dataset, cfg_dict_pipeline, cfg_dict_model = Config.initialize_cfg_file(cfg)
 
     dataset = Dataset(**cfg_dict_dataset)
-    model = RetinaShape(**cfg.model)
-    pipeline = ObjectDetection(model, dataset, global_cfg,**cfg.pipeline)
-    pipeline.show_inference()
+    model = RetinaShape(**cfg_dict_model)
+    pipeline = ObjectDetection(model, dataset, global_cfg,**cfg_dict_pipeline)
+
+    if cfg_dict_pipeline.get('inference_mode'):
+        pipeline.show_inference()
+    else:
+        raise ValueError("Can't run show_inference session with configuration of inference_mode: False")
 
 if __name__ == '__main__':
 

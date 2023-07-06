@@ -1,18 +1,14 @@
 import torch
 import torch.nn as nn
-import torchvision.models.detection.backbone_utils as backbone_utils
 import torchvision.models._utils as _utils
 import torch.nn.functional as F
-import numpy as np
-from collections import OrderedDict
-import time
-from model.MobileNet import MobileNetV1 as MobileNetV1
-from model.utils import conv_bn, conv_bn_no_relu, conv_bn1X1, conv_dw
+
+from model.MobileNet import MobileNetV1
+from model.utils import conv_bn, conv_bn_no_relu, conv_bn1X1
 from model.base_model import BaseModel
-from model.utils import BBoxCoder, Prior2DBoxGenerator, jaccard, point_form, log_sum_exp
-from model.utils import nms, multiclass_nms
+from model.utils import BoxCoder, CenterCoder, DirectionCoder, Prior2DBoxGenerator
+from model.utils import nms, jaccard, point_form, log_sum_exp
 from augment.augmentation import Augmentation
-import cv2
 
 class FPN(nn.Module):
     def __init__(self,in_channels_list,out_channels):
@@ -28,7 +24,7 @@ class FPN(nn.Module):
         self.merge2 = conv_bn(out_channels, out_channels, leaky = leaky)
 
     def forward(self, input):
-        # names = list(input.keys())
+
         input = list(input.values())
 
         output1 = self.output1(input[0])
@@ -97,6 +93,30 @@ class BboxHead(nn.Module):
 
         return out.view(out.shape[0], -1, 4)
 
+class CenterHead(nn.Module):
+    def __init__(self,inchannels=512,num_anchors=3):
+        super(CenterHead,self).__init__()
+        self.num_anchors = num_anchors
+        self.conv1x1 = nn.Conv2d(inchannels, self.num_anchors*2,kernel_size=(1,1),stride=1,padding=0)
+
+    def forward(self,x):
+        out = self.conv1x1(x)
+        out = out.permute(0,2,3,1).contiguous()
+
+        return out.view(out.shape[0], -1, 2)
+
+class DirectionHead(nn.Module):
+    def __init__(self,inchannels=512,num_anchors=3):
+        super(DirectionHead,self).__init__()
+        self.num_anchors = num_anchors
+        self.conv1x1 = nn.Conv2d(inchannels, self.num_anchors*2,kernel_size=(1,1),stride=1,padding=0)
+
+    def forward(self,x):
+        out = self.conv1x1(x)
+        out = out.permute(0,2,3,1).contiguous()
+
+        return out.view(out.shape[0], -1, 2)
+
 class Head(nn.Module):
 
     def __init__(self,
@@ -121,7 +141,7 @@ class Head(nn.Module):
         self.image_size = image_size
         
         if type(self.image_size) == int:
-            self.image_size = torch.tensor([self.image_size, self.image_size])
+            self.image_size = [self.image_size, self.image_size]
 
         self.fm_num = len(steps)
         self.num_classes = num_classes
@@ -143,7 +163,14 @@ class Head(nn.Module):
                                                classes_num=self.num_classes, anchors_num=self.num_anchors)
 
         self.BboxHead = self._make_bbox_head(fpn_num=self.fm_num, inchannels=self.channels, anchors_num=self.num_anchors)
-        self.bbox_coder = BBoxCoder(self.variances)
+        self.CenterHead = self._make_center_head(fpn_num=self.fm_num, inchannels=self.channels, anchors_num=self.num_anchors)
+        self.DirectionHead = self._make_direction_head(fpn_num=self.fm_num, inchannels=self.channels, anchors_num=self.num_anchors)
+
+
+        self.box_coder = BoxCoder(self.variances)
+        self.center_coder = CenterCoder(self.variances)
+        self.direction_coder = DirectionCoder(self.variances)
+
 
     def _make_class_head(self,fpn_num,inchannels,classes_num, anchors_num):
         classhead = nn.ModuleList()
@@ -157,6 +184,18 @@ class Head(nn.Module):
             bboxhead.append(BboxHead(inchannels, anchors_num))
         return bboxhead
 
+    def _make_center_head(self, fpn_num, inchannels, anchors_num):
+        centerhead = nn.ModuleList()
+        for i in range(fpn_num):
+            centerhead.append(CenterHead(inchannels, anchors_num))
+        return centerhead
+
+    def _make_direction_head(self, fpn_num, inchannels, anchors_num):
+        centerhead = nn.ModuleList()
+        for i in range(fpn_num):
+            centerhead.append(DirectionHead(inchannels, anchors_num))
+        return centerhead
+
     def forward(self, features):
         """Forward function on a feature map.
         Args:
@@ -167,10 +206,20 @@ class Head(nn.Module):
 
         cls_score = torch.cat([self.ClassHead[i](feature) for i, feature in enumerate(features)],dim=1)
         bbox_pred = torch.cat([self.BboxHead[i](feature) for i, feature in enumerate(features)], dim=1)
+        center_pred = torch.cat([self.CenterHead[i](feature) for i, feature in enumerate(features)], dim=1)
+        dirs_pred = torch.cat([self.DirectionHead[i](feature) for i, feature in enumerate(features)], dim=1)
 
-        return cls_score, bbox_pred
 
-    def assign_bboxes(self, target_bboxes, target_labels, predicted_bboxes, predicted_scores, image):
+        return cls_score, bbox_pred, center_pred, dirs_pred
+
+    def assign_bboxes(self, predictions, targets):
+
+        predicted_scores, predicted_bboxes, predicted_centers, predicted_dirs = predictions
+
+        target_bboxes = targets.boxes
+        target_labels = targets.labels
+        target_centers = targets.centers
+        target_dirs = targets.directions
         
         # Priors generator has to be initialized for every call/batch so it can adapt for various batch image size.
         # It can't be initialized statically with model initialization.
@@ -180,11 +229,15 @@ class Head(nn.Module):
                                         image_size=(self.image_size[0],self.image_size[1])
                                        )
 
-        priors = priorsGen.forward(device=predicted_bboxes.device)
+        priors = priorsGen.forward_v1(device=predicted_bboxes.device)
 
         # Allocate matrices for priors - gt boxes matching
         batch_bboxes = torch.empty(size=(predicted_bboxes.size(0), priors.size(0), 4),
                                     device=predicted_bboxes.device, dtype=torch.float32)
+        batch_centers = torch.empty(size=(predicted_bboxes.size(0), priors.size(0), 2),
+                                    device=predicted_bboxes.device, dtype=torch.float32)
+        batch_dirs = torch.empty(size=(predicted_bboxes.size(0), priors.size(0)),
+                            device=predicted_bboxes.device, dtype=torch.float32)
         batch_labels = torch.empty(size=(predicted_bboxes.size(0), priors.size(0)),
                                     device=predicted_bboxes.device, dtype=torch.int64)
 
@@ -204,7 +257,9 @@ class Head(nn.Module):
 
             if best_prior_idx_filter.shape[0] <= 0:
                 batch_bboxes[idx] = 0
+                batch_centers[idx] = 0
                 batch_labels[idx] = 0
+                batch_dirs[idx] = 0
 
             else:
 
@@ -225,12 +280,19 @@ class Head(nn.Module):
                 for j in range(best_prior_idx.size(0)):
                     best_truth_idx[best_prior_idx[j]] = j
 
-                assigned_bboxes = target_bboxes[idx][best_truth_idx]         # Shape: [num_priors,4] 
+                assigned_bboxes = target_bboxes[idx][best_truth_idx]         # Shape: [num_priors,4]
+                assigned_centers = target_centers[idx][best_truth_idx]       # Shape: [num_priors,2]
+                assigned_dirs = target_dirs[idx][best_truth_idx]       # Shape: [num_priors]
                 assigned_labels = target_labels[idx][best_truth_idx]         # Shape: [num_priors]      
                 assigned_labels[best_truth_overlap < self.iou_thr] = 0       # badly overlaping bboxes label as background examples
 
-                bboxes_diff = self.bbox_coder.encode(assigned_bboxes, priors)
-                batch_bboxes[idx] = bboxes_diff      # [num_priors,4] encoded offsets to learn
+                bboxes_offset = self.box_coder.encode(assigned_bboxes, priors)
+                centers_offset = self.center_coder.encode(assigned_centers, priors)
+                dirs_offset = self.direction_coder.encode(assigned_dirs, priors)
+
+                batch_bboxes[idx] = bboxes_offset                # [num_priors,4] encoded offsets to learn
+                batch_centers[idx] = centers_offset              # [num_priors,2] target centers assigned to each prior
+                batch_dirs[idx] = dirs_offset.squeeze(-1)        # [num_priors] target centers assigned to each prior
                 batch_labels[idx] = assigned_labels.squeeze(-1)  # [num_priors] top class label for each prior
         ##########################################################################################################
 
@@ -242,36 +304,6 @@ class Head(nn.Module):
         # Compute max conf across batch for hard negative mining -> to generate negative priors for learning
         batch_scores = predicted_scores.view(-1, self.num_classes)
 
-        #x = batch_scores
-        #print(x[positives.view(-1)])
-        #_, idx = x[:,1].sort(dim=0, descending=True)
-        #print(x[idx][:10])
-        #x_max = x.data.max()
-        #x = x-x_max
-        #print(x[positives.view(-1),1].sort(dim=0, descending=True)[0])
-        #_, idx = x[:,1].sort(dim=0, descending=True)
-        #print(x[idx][:10])
-        #x = torch.exp(x)
-        #print(x[positives.view(-1),1].sort(dim=0, descending=True)[0])
-        #_, idx = x[:,0].sort(dim=0, descending=True)
-        #print(x[idx][:10])
-        #x = torch.sum(x, 1, keepdim=True)
-        #print(x[positives.view(-1)].sort(descending=True)[0])
-        #_, idx = x.sort(dim=0, descending=True)
-        #print(x[idx][:10])
-        #x = torch.log(x)
-        #print(x[positives.view(-1)].sort(descending=True)[0])
-        #_, idx = x.sort(dim=0, descending=True)
-        #print(x[idx][:10])
-        #x = x + x_max
-        #print(x[positives.view(-1)].sort(descending=True)[0])
-        #_, idx = x.sort(dim=0, descending=True)
-        #print(x[idx][:10])
-        #x = x - batch_scores.gather(1, batch_labels.view(-1, 1))
-        #print(x[positives.view(-1)].sort(descending=True)[0])
-        #_, idx = x.sort(dim=0, descending=True)
-        #print(x[idx][:50])
-        
         class_loss = log_sum_exp(batch_scores) - batch_scores.gather(1, batch_labels.view(-1, 1))
         # Hard Negative Mining
         class_loss[positives.view(-1, 1)] = 0 # filter out pos boxes for now
@@ -287,42 +319,10 @@ class Head(nn.Module):
         # Get negative indexes for each image in a batch 
         # (count varies form image to image, because of various count positives in each image)
         negatives = idx_rank < num_neg.expand_as(idx_rank)
-        
-        #img = image[0].permute(1,2,0).cpu().detach().numpy()
-        #h,w= img.shape[:2]
 
-        #for box in target_bboxes[idx]:
-        #    box[0::2] = w*box[0::2].clamp(min=0, max=w)
-        #    box[1::2] = h*box[1::2].clamp(min=0, max=h)
-        #    box = box.detach().cpu().numpy().astype(np.int32)
-        #    img = cv2.rectangle(img,(box[0], box[1]),(box[2], box[3]),(255,0,0),1)
+        return batch_labels, batch_bboxes, batch_centers, batch_dirs, positives, negatives
 
-        #inds = torch.where(positives!= 0)[1]
-        #for ind in inds:
-        #    box = point_form(priors)[ind]
-        #    box[0::2] = w*box[0::2].clamp(min=0, max=w)
-        #    box[1::2] = h*box[1::2].clamp(min=0, max=h)
-        #    box = box.detach().cpu().numpy().astype(np.int32)
-        #    img = cv2.rectangle(img,(box[0], box[1]),(box[2], box[3]),(0,0,255),1)
-
-        #inds = torch.where(negatives!= 0)[1]
-        #for ind in inds:
-
-        #    box = point_form(priors)[ind]
-        #    box[0::2] = w*box[0::2].clamp(min=0, max=w)
-        #    box[1::2] = h*box[1::2].clamp(min=0, max=h)
-        #    box = box.detach().cpu().numpy().astype(np.int32)
-        #    img = cv2.rectangle(img,(box[0], box[1]),(box[2], box[3]),(0,255,0),1)
-
-        #cv2.namedWindow("image", cv2.WINDOW_NORMAL)
-        #cv2.resizeWindow("image", 1300, 1600)
-        #cv2.imshow('image', img) 
-        #cv2.waitKey(0) 
-        #cv2.destroyAllWindows() 
-
-        return batch_bboxes, batch_labels, positives, negatives
-
-    def get_bboxes(self, scores, box_preds):
+    def get_bboxes(self, scores_pred, boxes_pred, centers_pred, dirs_pred, priors):
 
         """Get bboxes of anchor head.
         Args:
@@ -335,24 +335,29 @@ class Head(nn.Module):
                 (bboxes, scores, labels).
         """
 
-        assert scores.size()[0] == box_preds.size()[0]
+        assert scores_pred.size()[0] == boxes_pred.size()[0]
 
-        # Get priors for boxes decoding
-        priorsGen = Prior2DBoxGenerator(steps=self.steps,
-                                        aspects=self.aspects,
-                                        sizes=self.sizes,
-                                        image_size=(self.image_size[0],self.image_size[1])
-                                       )
+        boxes_pred = self.box_coder.decode(boxes_pred, priors)
+        centers_pred = self.center_coder.decode(centers_pred, priors)
+        dirs_pred = self.direction_coder.decode(dirs_pred, priors)
 
-        priors = priorsGen.forward(device=box_preds.device)
-        boxes = self.bbox_coder.decode(box_preds, priors)
-        idxs = nms(boxes, scores[:,1], self.score_thr, self.nms_top_k, self.nms_thresh)
-        boxes = boxes[idxs]
+        idxs = nms(boxes_pred, scores_pred[:,1], self.score_thr, self.nms_top_k, self.nms_thresh)
+
+        scores = scores_pred[idxs,1]
         labels = torch.full((idxs.shape[0],), 1, dtype=torch.long)
-        scores = scores[idxs,1]
-        
-        return boxes, scores, labels
+        boxes = boxes_pred[idxs]
+        centers = centers_pred[idxs]
+        dirs = dirs_pred[idxs]
 
+        # Here Radius derived from box and center
+        radius = torch.max(torch.cat([
+                               torch.abs(centers[:,0]-boxes[:,0]).unsqueeze(-1),
+                               torch.abs(centers[:,0]-boxes[:,2]).unsqueeze(-1),
+                               torch.abs(centers[:,1]-boxes[:,1]).unsqueeze(-1),
+                               torch.abs(centers[:,1]-boxes[:,3]).unsqueeze(-1)],
+                               dim = -1), dim = -1).values
+
+        return scores, labels, boxes, centers, radius, dirs
 
 class RetinaShape(BaseModel):
     
@@ -381,12 +386,20 @@ class RetinaShape(BaseModel):
         self.augment = augment
         self.head = head
 
+        self.steps = self.head.steps
+        self.aspects = self.head.aspects
+        self.sizes = self.head.sizes
+        self.image_size = self.head.image_size
+        
+        if type(self.image_size) == int:
+            self.image_size = [self.image_size, self.image_size]
+
         self.backbone_cfg = self.cfg[self.backbone]
 
         # Initialize required backbone - MobileNet vs ResNet50
         # MobileNet
         if self.backbone == 'mobilenet':
-            backbone_model = MobileNetV1()
+            backbone_model = MobileNetV1(self.pretrained)
             if pretrained:
                 checkpoint = torch.load("./weights/mobilenet.tar", map_location=self.device)
                 from collections import OrderedDict
@@ -425,6 +438,10 @@ class RetinaShape(BaseModel):
 
     def forward(self,inputs):
         
+        b,c,h,w = inputs.images.shape
+        if self.pretrained:
+            inputs.images = inputs.images.expand(b,3,h,w) 
+
         out = self.body(inputs.images)
 
         # FPN
@@ -436,9 +453,9 @@ class RetinaShape(BaseModel):
         feature3 = self.ssh3(fpn[2])
         features = [feature1, feature2, feature3]
 
-        cls_pred, boxes_pred = self.head(features)
+        cls_pred, boxes_pred, centers_pred, dirs_pred = self.head(features)
 
-        return cls_pred, boxes_pred 
+        return cls_pred, boxes_pred, centers_pred, dirs_pred
 
     def get_optimizer(self, cfg):
 
@@ -446,48 +463,53 @@ class RetinaShape(BaseModel):
 
         return optimizer, None
 
-    def loss(self, predictions, inputs):
+    def loss(self, predictions, targets):
 
-        scores, pred_boxes = predictions
-        gt_boxes = inputs.boxes
-        gt_labels = inputs.labels
+        pred_scores, pred_boxes, pred_centers, pred_dirs = predictions
 
-        bboxes, labels, pos_idx, neg_idx = self.head.assign_bboxes(gt_boxes, gt_labels, pred_boxes, scores,inputs.images)
+        labels, boxes, centers, dirs, pos_idx, neg_idx = self.head.assign_bboxes(predictions, targets)
     
         N = max(pos_idx.data.sum().float(), 1)
 
         # Confidence Loss Including Positive and Negative Examples
-        loss_cls = F.cross_entropy(scores[(pos_idx+neg_idx).gt(0)].view(-1, self.head.num_classes),
+        loss_cls = F.cross_entropy(pred_scores[(pos_idx+neg_idx).gt(0)].view(-1, self.head.num_classes),
                                    labels[(pos_idx+neg_idx).gt(0)], reduction='sum')
 
         if torch.sum(pos_idx) > 0:
 
             # Localization Loss (Smooth L1)
             loss_box = F.smooth_l1_loss(pred_boxes[pos_idx].view(-1, 4), 
-                                        bboxes[pos_idx].view(-1, 4), reduction='sum')
+                                        boxes[pos_idx].view(-1, 4), reduction='sum')
+            # Center Loss (Smooth L1)
+            loss_center = F.smooth_l1_loss(pred_centers[pos_idx].view(-1, 2), 
+                                           centers[pos_idx].view(-1, 2), reduction='sum')
+
+            # Direction Loss (Smooth L1)
+            loss_dir = F.smooth_l1_loss(pred_dirs[pos_idx].view(-1, 2), 
+                                        torch.cat([torch.sin(dirs[pos_idx]).unsqueeze(-1), 
+                                        torch.cos(dirs[pos_idx]).unsqueeze(-1)], dim=1).view(-1, 2), 
+                                        reduction='sum')
+
         else:
 
-            loss_box = bboxes.sum()
+            loss_box = boxes.sum()
+            loss_center = centers.sum()
+            loss_dir = dirs.sum()
 
         return {
                 'loss_cls': loss_cls/N,
-                'loss_box': loss_box/N
+                'loss_box': loss_box/N,
+                'loss_center': loss_center/N,
+                'loss_dir': loss_dir/N
                }
     
     def preprocess(self, data, attr):
 
         #Augment data
-        if attr['split'] in ['training', 'validation']:     
-            data = self.augmentor.augment(data, attr['split'])
-        else:
-            data['image'] = np.float32(data['image'])/255
-            data['boxes'][:, 0::2] /= data['image'].shape[1]
-            data['boxes'][:, 1::2] /= data['image'].shape[0]
-            data['centers'][0] /= data['image'].shape[1]
-            data['centers'][1] /= data['image'].shape[0]
-            data['labels'] = np.expand_dims(data['labels'], 1)
+        data = self.augmentor.augment(data, attr['split'])
 
-        new_data = {'image': data['image'], 'labels': data['labels'], 'boxes': data['boxes']}
+        new_data = {'image': data['image'], 'labels': data['labels'], 'boxes': data['boxes'], 
+                    'centers': data['centers'], 'radius': data['radius'], 'directions': data['directions']}
 
         return new_data   
 
@@ -497,21 +519,35 @@ class RetinaShape(BaseModel):
 
     def inference_end(self, results):
 
-        batch_score, batch_boxes = results
+        batch_score, batch_boxes, batch_centers, batch_dirs = results
         batch_score = F.softmax(batch_score, dim=-1)
         inference_result = []
+
+        priors_generator = Prior2DBoxGenerator(steps=self.steps,
+                                               aspects=self.aspects,
+                                               sizes=self.sizes,
+                                               image_size=(self.image_size[0],self.image_size[1])
+                                              ) 
+
+        priors = priors_generator.forward_v1(self.device)
+
         
         for idx in range(batch_boxes.size(0)):
 
             boxes = batch_boxes[idx]
             scores = batch_score[idx]
+            centers = batch_centers[idx]
+            dirs = batch_dirs[idx]
 
-            pred_boxes, pred_scores, pred_labels = self.head.get_bboxes(scores, boxes)
+            pred_scores, pred_labels, pred_boxes, pred_centers, pred_radius, pred_dirs = \
+                 self.head.get_bboxes(scores, boxes, centers, dirs, priors)
 
             inference_result.append([])
-
-            for box, score, label in zip(pred_boxes, pred_scores, pred_labels):
+ 
+            for box, center, score, label, rad, direction in zip(pred_boxes, pred_centers, pred_scores, 
+                                                                 pred_labels, pred_radius, pred_dirs):
         
-                inference_result[-1].append({'box': box, 'label': label, 'score': score})
+                inference_result[-1].append({'label': label, 'score': score, 'box': box, 'center': center, 'radius': rad,
+                                             'direction': direction})
 
         return inference_result

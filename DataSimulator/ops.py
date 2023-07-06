@@ -73,13 +73,14 @@ def calculate_ellipse_pixels(center, axes, angle):
     for ang in range(0,360):
 
         u = np.cos(np.deg2rad(ang))*axes[0]
-        v = np.sin(np.deg2rad(ang))*axes[1]
+        v = np.sin(np.deg2rad(-ang))*axes[1]
 
-        x = u*Cos - v*Sin + center[0]
+        x = u*Cos + v*Sin + center[0]
         y = u*Sin - v*Cos + center[1]
         coords.append([x,y])
 
     return np.round(np.array(coords),0).astype(np.int32)
+    
 
 def calculate_ellipse_pixel(center, axes, angle, ang):
     
@@ -89,10 +90,10 @@ def calculate_ellipse_pixel(center, axes, angle, ang):
     coords = []
 
     u = np.cos(np.deg2rad(ang))*axes[0]
-    v = np.sin(np.deg2rad(ang))*axes[1]
+    v = np.sin(np.deg2rad(-ang))*axes[1]
 
-    x = u*Sin - v*Cos+ center[0]
-    y = u*Cos - v*Sin + center[1]
+    x = u*Cos + v*Sin + center[0]
+    y = u*Sin - v*Cos + center[1]
     coords.append([x,y])
 
     return np.round(np.array(coords),0).astype(np.int32)
@@ -156,9 +157,9 @@ def ellipse_center_limits(axesLength, angle, width, height):
         y2 = axesLength[0]*Sin*np.cos(tx + np.pi) - axesLength[1]*Cos*np.sin(ty + np.pi)
 
         x_low = np.round(np.abs(np.min([x1,x2])))
-        x_up = image.shape[1]- np.round(np.max([x1,x2]))
+        x_up = width - np.round(np.max([x1,x2]))
 
         y_low = np.round(np.abs(np.min([y1,y2])))
-        y_up = image.shape[0]- np.round(np.max([y1,y2]))
+        y_up = height - np.round(np.max([y1,y2]))
 
         return (int(x_low), int(x_up)), (int(y_low), int(y_up))
