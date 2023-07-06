@@ -1,7 +1,6 @@
 from abc import ABC, abstractmethod
 import os
 from datetime import datetime
-import random
 import numpy as np
 import torch
 from config import Config

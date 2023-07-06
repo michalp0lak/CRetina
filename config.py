@@ -58,9 +58,7 @@ class Config(object):
         """
     
         if (cfg.global_args is None) | ('device' not in cfg.global_args):
-            cfg.global_args.device = 'cuda'
-        if (cfg.global_args.__getattr__('device') != 'cuda'):
-             cfg.global_args.device = 'cuda'
+            cfg.global_args.device = 'cpu'
 
         cfg.dataset.seed = cfg.global_args.seed
         cfg.pipeline.seed = cfg.global_args.seed
