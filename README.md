@@ -1,8 +1,7 @@
 <h1>Detection of C-shapes</h1>
 
 <h2>Introduction</h2>
-The code in this project/repository is designed for training and experimenting with RetinaNet object detection model. Framework expects two-dimensional RGB image as a source data. Framework is configured to train model detecting C-shaped objects. Dataset prepared for use by this framework is located in <b>smb://oelnas.riegl-gmbh/scandaten/AI_DATA/Object_Detection/2D/Cshapes/2023-03-22_11-47-02/</b>.
-
+The code in this project/repository is designed for training and experimenting with RetinaNet object detection model. Framework expects two-dimensional RGB image as a source data. Framework is configured to train model detecting C-shaped objects.
 <h2>Installation</h2>
 
 <h3>Requirements</h3>
@@ -21,8 +20,7 @@ The code in this project/repository is designed for training and experimenting w
 ```
 1. open Anaconda Prompt
 
-2. Download projet to your local machine
- ```git clone git@gitlab.riegl-gmbh:xp/RetinaC.git```
+2. Download projet to your local machin
 
 3. Go to the project folder:
 cd /Path/To/RetinaC/
